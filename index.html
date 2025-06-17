@@ -1,0 +1,192 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trò chơi MyWolf</title>
+    <style>
+        .hidden {
+            display: none;
+        }
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+        }
+        input, button {
+            margin: 10px 0;
+            padding: 10px;
+        }
+    </style>
+    <!-- Firebase SDK phiên bản 8.x -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+</head>
+<body>
+    <!-- Phần thiết lập trò chơi (quản trò) -->
+    <div id="setupContainer" class="hidden">
+        <h2>Thiết lập trò chơi</h2>
+        <input type="number" id="playerCount" placeholder="Số người chơi">
+        wart<input type="text" id="rolesInput" placeholder="Danh sách vai trò (cách nhau bởi dấu phẩy)">
+        <button onclick="setupGame()">Tạo trò chơi</button>
+        <div id="gameCode" class="hidden">
+            Mã trò chơi: <span id="code"></span>
+        </div>
+    </div>
+
+    <!-- Phần tham gia trò chơi (người chơi) -->
+    <div id="playerContainer">
+        <h2>Tham gia trò chơi</h2>
+        <input type="text" id="gameCodeInput" placeholder="Mã trò chơi">
+        <input type="text" id="playerName" placeholder="Tên của bạn">
+        <button onclick="joinGame()">Xác nhận</button>
+        <div id="roleResult" class="hidden">
+            Vai trò của bạn: <span id="role"></span>
+        </div>
+    </div>
+
+    <!-- Phần quản trò xem vai trò -->
+    <div id="adminContainer" class="hidden">
+        <h2>Quản trò xem vai trò</h2>
+        <input type="text" id="adminGameCode" placeholder="Mã trò chơi">
+        <button onclick="viewRoles()">Xem vai trò</button>
+        <div id="roleList" class="hidden"></div>
+    </div>
+
+    <script>
+        // Cấu hình Firebase của bạn
+        const firebaseConfig = {
+            apiKey: "AIzaSyAYUuNxsYWI59ahvjKHZujKyTfi95DzNwU",
+            authDomain: "mywolf-game.firebaseapp.com",
+            databaseURL: "https://mywolf-game-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "mywolf-game",
+            storageBucket: "mywolf-game.firebasestorage.app",
+            messagingSenderId: "1099375631706",
+            appId: "1:1099375631706:web:a1f6ccbcf71b7176046763"
+        };
+        // Khởi tạo Firebase
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+
+        // Xác định vai trò người dùng
+        let isGameMaster = confirm("Bạn là quản trò?");
+        if (isGameMaster) {
+            document.getElementById("setupContainer").classList.remove("hidden");
+            document.getElementById("adminContainer").classList.remove("hidden");
+            document.getElementById("playerContainer").classList.add("hidden");
+        } else {
+            document.getElementById("playerContainer").classList.remove("hidden");
+            document.getElementById("setupContainer").classList.add("hidden");
+            document.getElementById("adminContainer").classList.add("hidden");
+        }
+
+        // Hàm tạo trò chơi (quản trò)
+        async function setupGame() {
+            let playerCount = document.getElementById("playerCount").value;
+            let rolesInput = document.getElementById("rolesInput").value;
+            let roles = rolesInput.split(",").map(role => role.trim());
+            if (roles.length < playerCount) {
+                alert("Số vai trò phải lớn hơn hoặc bằng số người chơi!");
+                return;
+            }
+            let code = Math.random().toString(36).substring(2, 7).toUpperCase();
+            await db.ref('games/' + code).set({
+                playerCount: playerCount,
+                roles: roles,
+                players: {}
+            });
+            document.getElementById("code").textContent = code;
+            document.getElementById("gameCode").classList.remove("hidden");
+            alert("Trò chơi đã được tạo! Mã: " + code);
+        }
+
+        // Hàm tham gia trò chơi (người chơi)
+        async function joinGame() {
+            let gameCode = document.getElementById("gameCodeInput").value.toUpperCase();
+            let playerName = document.getElementById("playerName").value.trim();
+            let gameRef = db.ref('games/' + gameCode);
+            let snapshot = await gameRef.get();
+            if (!snapshot.exists()) {
+                alert("Mã trò chơi không hợp lệ!");
+                return;
+            }
+            let game = snapshot.val();
+            if (Object.keys(game.players).length >= game.playerCount) {
+                alert("Trò chơi đã đầy!");
+                return;
+            }
+            if (game.players[playerName]) {
+                alert("Tên người chơi đã tồn tại!");
+                return;
+            }
+            let availableRoles = game.roles.filter(role => !Object.values(game.players).includes(role));
+            if (availableRoles.length === 0) {
+                alert("Không còn vai trò nào!");
+                return;
+            }
+            let role = availableRoles[Math.floor(Math.random() * availableRoles.length)];
+            game.players[playerName] = role;
+            await gameRef.update({ players: game.players });
+            document.getElementById("role").textContent = role;
+            document.getElementById("roleResult").classList.remove("hidden");
+            alert("Bạn đã tham gia trò chơi với vai trò: " + role);
+        }
+
+        // Hàm xem vai trò (quản trò)
+        async function viewRoles() {
+            let gameCode = document.getElementById("adminGameCode").value.toUpperCase();
+            let gameRef = db.ref('games/' + gameCode);
+            let snapshot = await gameRef.get();
+            if (!snapshot.exists()) {
+                alert("Mã trò chơi không hợp lệ!");
+                return;
+            }
+            let game = snapshot.val();
+            let roleList = document.getElementById("roleList");
+            roleList.innerHTML = "";
+            for (let player in game.players) {
+                roleList.innerHTML += `<p>${player}: ${game.players[player]}</p>`;
+            }
+            roleList.classList.remove("hidden");
+        }
+    </script>
+</body>
+</html>
