@@ -1,43 +1,4 @@
-<script type="text/javascript">
-        var gk_isXlsx = false;
-        var gk_xlsxFileLookup = {};
-        var gk_fileData = {};
-        function filledCell(cell) {
-          return cell !== '' && cell != null;
-        }
-        function loadFileData(filename) {
-        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
-            try {
-                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
-                var firstSheetName = workbook.SheetNames[0];
-                var worksheet = workbook.Sheets[firstSheetName];
-
-                // Convert sheet to JSON to filter blank rows
-                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
-                // Filter out blank rows (rows where all cells are empty, null, or undefined)
-                var filteredData = jsonData.filter(row => row.some(filledCell));
-
-                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
-                var headerRowIndex = filteredData.findIndex((row, index) =>
-                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
-                );
-                // Fallback
-                if (headerRowIndex === -1 || headerRowIndex > 25) {
-                  headerRowIndex = 0;
-                }
-
-                // Convert filtered JSON back to CSV
-                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
-                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
-                return csv;
-            } catch (e) {
-                console.error(e);
-                return "";
-            }
-        }
-        return gk_fileData[filename] || "";
-        }
-        </script><!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="vi">
 <head>
     <meta charset="UTF-8">
@@ -50,10 +11,81 @@
         body {
             font-family: Arial, sans-serif;
             padding: 20px;
+            max-width: 800px;
+            margin: 0 auto;
         }
-        input, button {
+        input, button, select {
             margin: 10px 0;
             padding: 10px;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button.delete {
+            background-color: #f44336;
+        }
+        button.delete:hover {
+            background-color: #d32f2f;
+        }
+        .status-bar {
+            background-color: #f0f0f0;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+        .status-bar.full {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .status-bar.empty {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .room-list {
+            margin-top: 20px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .room-item {
+            padding: 15px;
+            border-bottom: 1px solid #ddd;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .room-item:last-child {
+            border-bottom: none;
+        }
+        .room-info {
+            flex: 1;
+        }
+        .room-actions {
+            display: flex;
+            gap: 10px;
+        }
+        .section {
+            margin-bottom: 30px;
+            padding: 20px;
+            background-color: #f9f9f9;
+            border-radius: 8px;
+        }
+        h2 {
+            color: #333;
+            border-bottom: 2px solid #4CAF50;
+            padding-bottom: 10px;
+            margin-top: 0;
+        }
+        .room-code {
+            font-weight: bold;
+            color: #1a73e8;
         }
     </style>
     <!-- Firebase SDK phiên bản 8.x -->
@@ -62,32 +94,55 @@
 </head>
 <body>
     <!-- Phần thiết lập trò chơi (quản trò) -->
-    <div id="setupContainer" class="hidden">
+    <div id="setupContainer" class="hidden section">
         <h2>Thiết lập trò chơi</h2>
         <input type="number" id="playerCount" placeholder="Số người chơi">
-        wart<input type="text" id="rolesInput" placeholder="Danh sách vai trò (cách nhau bởi dấu phẩy)">
+        <input type="text" id="rolesInput" placeholder="Danh sách vai trò (cách nhau bởi dấu phẩy)">
         <button onclick="setupGame()">Tạo trò chơi</button>
         <div id="gameCode" class="hidden">
-            Mã trò chơi: <span id="code"></span>
+            Mã trò chơi: <span id="code" class="room-code"></span>
         </div>
     </div>
 
+    <!-- Phần danh sách phòng cho quản trò -->
+    <div id="adminRoomsContainer" class="hidden section">
+        <h2>Danh sách phòng</h2>
+        <button onclick="loadRooms(true)">Làm mới danh sách</button>
+        <div id="adminRoomsList" class="room-list"></div>
+    </div>
+
     <!-- Phần tham gia trò chơi (người chơi) -->
-    <div id="playerContainer">
+    <div id="playerContainer" class="section">
         <h2>Tham gia trò chơi</h2>
-        <input type="text" id="gameCodeInput" placeholder="Mã trò chơi">
-        <input type="text" id="playerName" placeholder="Tên của bạn">
-        <button onclick="joinGame()">Xác nhận</button>
+        <div id="roomSelectionArea">
+            <p>Chọn phòng để tham gia:</p>
+            <button onclick="loadRooms(false)">Làm mới danh sách phòng</button>
+            <div id="playerRoomsList" class="room-list"></div>
+        </div>
+        <div id="joinArea" class="hidden">
+            <p>Đang tham gia phòng: <span id="selectedRoomCode" class="room-code"></span></p>
+            <input type="text" id="playerName" placeholder="Tên của bạn">
+            <button onclick="joinSelectedGame()">Tham gia</button>
+            <button onclick="backToRoomList()">Chọn phòng khác</button>
+        </div>
+        <div id="playerStatus" class="hidden status-bar">
+            Số người chơi: <span id="currentPlayers">0</span>/<span id="totalPlayers">0</span>
+        </div>
         <div id="roleResult" class="hidden">
             Vai trò của bạn: <span id="role"></span>
         </div>
     </div>
 
     <!-- Phần quản trò xem vai trò -->
-    <div id="adminContainer" class="hidden">
-        <h2>Quản trò xem vai trò</h2>
-        <input type="text" id="adminGameCode" placeholder="Mã trò chơi">
-        <button onclick="viewRoles()">Xem vai trò</button>
+    <div id="adminContainer" class="hidden section">
+        <h2>Quản lý vai trò</h2>
+        <div id="adminGameInfo" class="hidden">
+            Đang xem phòng: <span id="adminCurrentRoom" class="room-code"></span>
+            <button onclick="deleteCurrentRoom()" class="delete">Xóa phòng</button>
+        </div>
+        <div id="adminStatus" class="hidden status-bar">
+            Số người chơi: <span id="adminCurrentPlayers">0</span>/<span id="adminTotalPlayers">0</span>
+        </div>
         <div id="roleList" class="hidden"></div>
     </div>
 
@@ -105,87 +160,340 @@
         // Khởi tạo Firebase
         firebase.initializeApp(firebaseConfig);
         const db = firebase.database();
+        
+        // Biến lưu trữ mã trò chơi hiện tại và lắng nghe thay đổi
+        let currentGameCode = '';
+        let selectedGameCode = '';
+        let playersListener = null;
 
         // Xác định vai trò người dùng
         let isGameMaster = confirm("Bạn là quản trò?");
         if (isGameMaster) {
             document.getElementById("setupContainer").classList.remove("hidden");
             document.getElementById("adminContainer").classList.remove("hidden");
+            document.getElementById("adminRoomsContainer").classList.remove("hidden");
             document.getElementById("playerContainer").classList.add("hidden");
+            // Tự động tải danh sách phòng cho quản trò
+            loadRooms(true);
         } else {
             document.getElementById("playerContainer").classList.remove("hidden");
             document.getElementById("setupContainer").classList.add("hidden");
             document.getElementById("adminContainer").classList.add("hidden");
+            document.getElementById("adminRoomsContainer").classList.add("hidden");
+            // Tự động tải danh sách phòng cho người chơi
+            loadRooms(false);
         }
 
         // Hàm tạo trò chơi (quản trò)
         async function setupGame() {
             let playerCount = document.getElementById("playerCount").value;
             let rolesInput = document.getElementById("rolesInput").value;
+            
+            if (!playerCount || !rolesInput) {
+                alert("Vui lòng nhập đầy đủ thông tin!");
+                return;
+            }
+            
             let roles = rolesInput.split(",").map(role => role.trim());
             if (roles.length < playerCount) {
                 alert("Số vai trò phải lớn hơn hoặc bằng số người chơi!");
                 return;
             }
-            let code = Math.random().toString(36).substring(2, 7).toUpperCase();
+            
+            // Tạo mã trò chơi dựa trên thời gian và số ngẫu nhiên
+            let code = 'R' + Math.random().toString(36).substring(2, 7).toUpperCase();
             await db.ref('games/' + code).set({
-                playerCount: playerCount,
+                playerCount: parseInt(playerCount),
                 roles: roles,
-                players: {}
+                players: {},
+                createdAt: firebase.database.ServerValue.TIMESTAMP
             });
+            
             document.getElementById("code").textContent = code;
             document.getElementById("gameCode").classList.remove("hidden");
+            currentGameCode = code;
+            
+            // Tự động xem vai trò sau khi tạo game
+            viewRoles(code);
+            
+            // Cập nhật danh sách phòng
+            loadRooms(true);
+            
             alert("Trò chơi đã được tạo! Mã: " + code);
         }
 
-        // Hàm tham gia trò chơi (người chơi)
-        async function joinGame() {
-            let gameCode = document.getElementById("gameCodeInput").value.toUpperCase();
+        // Hàm lấy danh sách phòng
+        async function loadRooms(isAdmin) {
+            const gamesRef = db.ref('games');
+            gamesRef.once("value", (snapshot) => {
+                let roomsContainer = isAdmin ? document.getElementById("adminRoomsList") : document.getElementById("playerRoomsList");
+                roomsContainer.innerHTML = "";
+                
+                if (!snapshot.exists()) {
+                    roomsContainer.innerHTML = "<p>Không có phòng nào.</p>";
+                    return;
+                }
+                
+                let games = snapshot.val();
+                let hasRooms = false;
+                
+                for (let code in games) {
+                    hasRooms = true;
+                    let game = games[code];
+                    let playerCount = game.playerCount;
+                    let currentCount = game.players ? Object.keys(game.players).length : 0;
+                    
+                    let roomItem = document.createElement("div");
+                    roomItem.className = "room-item";
+                    
+                    let roomInfo = document.createElement("div");
+                    roomInfo.className = "room-info";
+                    roomInfo.innerHTML = `<div>Phòng: <span class="room-code">${code}</span></div>
+                                        <div>Số người chơi: ${currentCount}/${playerCount}</div>`;
+                    
+                    let roomActions = document.createElement("div");
+                    roomActions.className = "room-actions";
+                    
+                    if (isAdmin) {
+                        // Actions cho quản trò
+                        let viewButton = document.createElement("button");
+                        viewButton.innerText = "Xem";
+                        viewButton.onclick = function() { viewRoles(code); };
+                        
+                        let deleteButton = document.createElement("button");
+                        deleteButton.innerText = "Xóa";
+                        deleteButton.className = "delete";
+                        deleteButton.onclick = function() { deleteRoom(code); };
+                        
+                        roomActions.appendChild(viewButton);
+                        roomActions.appendChild(deleteButton);
+                    } else {
+                        // Actions cho người chơi
+                        let joinButton = document.createElement("button");
+                        joinButton.innerText = "Tham gia";
+                        joinButton.onclick = function() { selectRoom(code); };
+                        roomActions.appendChild(joinButton);
+                    }
+                    
+                    roomItem.appendChild(roomInfo);
+                    roomItem.appendChild(roomActions);
+                    roomsContainer.appendChild(roomItem);
+                }
+                
+                if (!hasRooms) {
+                    roomsContainer.innerHTML = "<p>Không có phòng nào.</p>";
+                }
+            });
+        }
+
+        // Hàm chọn phòng cho người chơi
+        function selectRoom(code) {
+            selectedGameCode = code;
+            document.getElementById("selectedRoomCode").textContent = code;
+            document.getElementById("roomSelectionArea").classList.add("hidden");
+            document.getElementById("joinArea").classList.remove("hidden");
+            
+            // Hiển thị thông tin số lượng người chơi
+            updatePlayerStatus(code);
+        }
+
+        // Hàm quay lại danh sách phòng
+        function backToRoomList() {
+            document.getElementById("roomSelectionArea").classList.remove("hidden");
+            document.getElementById("joinArea").classList.add("hidden");
+            document.getElementById("roleResult").classList.add("hidden");
+            document.getElementById("playerStatus").classList.add("hidden");
+            
+            // Ngừng lắng nghe phòng cũ nếu có
+            if (playersListener) {
+                playersListener.off();
+            }
+            
+            // Làm mới danh sách phòng
+            loadRooms(false);
+        }
+
+        // Hàm tham gia trò chơi đã chọn
+        async function joinSelectedGame() {
             let playerName = document.getElementById("playerName").value.trim();
-            let gameRef = db.ref('games/' + gameCode);
-            let snapshot = await gameRef.get();
+            
+            if (!selectedGameCode || !playerName) {
+                alert("Vui lòng nhập tên của bạn!");
+                return;
+            }
+            
+            let gameRef = db.ref('games/' + selectedGameCode);
+            let snapshot = await gameRef.once("value");
+            
             if (!snapshot.exists()) {
-                alert("Mã trò chơi không hợp lệ!");
+                alert("Phòng không còn tồn tại!");
+                backToRoomList();
                 return;
             }
+            
             let game = snapshot.val();
+            
+            // Khởi tạo players nếu chưa có
+            if (!game.players) {
+                game.players = {};
+            }
+            
             if (Object.keys(game.players).length >= game.playerCount) {
-                alert("Trò chơi đã đầy!");
+                alert("Phòng đã đầy!");
                 return;
             }
+            
             if (game.players[playerName]) {
-                alert("Tên người chơi đã tồn tại!");
+                alert("Tên người chơi đã tồn tại trong phòng này!");
                 return;
             }
-            let availableRoles = game.roles.filter(role => !Object.values(game.players).includes(role));
+            
+            let availableRoles = game.roles.filter(role => 
+                !Object.values(game.players).includes(role)
+            );
+            
             if (availableRoles.length === 0) {
                 alert("Không còn vai trò nào!");
                 return;
             }
+            
             let role = availableRoles[Math.floor(Math.random() * availableRoles.length)];
             game.players[playerName] = role;
-            await gameRef.update({ players: game.players });
+            
+            await gameRef.child('players').update({ [playerName]: role });
+            
             document.getElementById("role").textContent = role;
             document.getElementById("roleResult").classList.remove("hidden");
+            
             alert("Bạn đã tham gia trò chơi với vai trò: " + role);
         }
 
         // Hàm xem vai trò (quản trò)
-        async function viewRoles() {
-            let gameCode = document.getElementById("adminGameCode").value.toUpperCase();
-            let gameRef = db.ref('games/' + gameCode);
-            let snapshot = await gameRef.get();
-            if (!snapshot.exists()) {
-                alert("Mã trò chơi không hợp lệ!");
+        function viewRoles(code) {
+            let gameCode = code || currentGameCode;
+            
+            if (!gameCode) {
+                alert("Vui lòng chọn một phòng!");
                 return;
             }
-            let game = snapshot.val();
+            
+            currentGameCode = gameCode;
+            document.getElementById("adminCurrentRoom").textContent = gameCode;
+            document.getElementById("adminGameInfo").classList.remove("hidden");
+            
+            // Ngừng lắng nghe trước đó nếu có
+            if (playersListener) {
+                playersListener.off();
+            }
+            
+            // Bắt đầu lắng nghe thay đổi trong danh sách người chơi
+            playersListener = db.ref('games/' + gameCode);
+            playersListener.on("value", (snapshot) => {
+                if (snapshot.exists()) {
+                    updateAdminView(snapshot.val());
+                } else {
+                    document.getElementById("roleList").innerHTML = "<p>Phòng không tồn tại hoặc đã bị xóa!</p>";
+                    document.getElementById("roleList").classList.remove("hidden");
+                    document.getElementById("adminStatus").classList.add("hidden");
+                    document.getElementById("adminGameInfo").classList.add("hidden");
+                }
+            });
+        }
+
+        // Hàm cập nhật giao diện người chơi
+        function updatePlayerStatus(gameCode) {
+            let gameRef = db.ref('games/' + gameCode);
+            
+            // Ngừng lắng nghe trước đó nếu có
+            if (playersListener) {
+                playersListener.off();
+            }
+            
+            playersListener = gameRef;
+            gameRef.on("value", (snapshot) => {
+                if (snapshot.exists()) {
+                    let game = snapshot.val();
+                    let playerCount = game.playerCount;
+                    let currentCount = game.players ? Object.keys(game.players).length : 0;
+                    
+                    document.getElementById("currentPlayers").textContent = currentCount;
+                    document.getElementById("totalPlayers").textContent = playerCount;
+                    document.getElementById("playerStatus").classList.remove("hidden");
+                    
+                    // Thay đổi màu dựa trên tỷ lệ
+                    let statusBar = document.getElementById("playerStatus");
+                    if (currentCount == playerCount) {
+                        statusBar.className = "status-bar full";
+                    } else if (currentCount == 0) {
+                        statusBar.className = "status-bar empty";
+                    } else {
+                        statusBar.className = "status-bar";
+                    }
+                } else {
+                    // Phòng đã bị xóa
+                    alert("Phòng không còn tồn tại!");
+                    backToRoomList();
+                }
+            });
+        }
+
+        // Hàm cập nhật giao diện quản trò
+        function updateAdminView(game) {
             let roleList = document.getElementById("roleList");
             roleList.innerHTML = "";
-            for (let player in game.players) {
-                roleList.innerHTML += `<p>${player}: ${game.players[player]}</p>`;
+            
+            let playerCount = game.playerCount;
+            let currentCount = game.players ? Object.keys(game.players).length : 0;
+            
+            document.getElementById("adminCurrentPlayers").textContent = currentCount;
+            document.getElementById("adminTotalPlayers").textContent = playerCount;
+            document.getElementById("adminStatus").classList.remove("hidden");
+            
+            // Thay đổi màu dựa trên tỷ lệ
+            let statusBar = document.getElementById("adminStatus");
+            if (currentCount == playerCount) {
+                statusBar.className = "status-bar full";
+            } else if (currentCount == 0) {
+                statusBar.className = "status-bar empty";
+            } else {
+                statusBar.className = "status-bar";
             }
+            
+            if (!game.players || Object.keys(game.players).length === 0) {
+                roleList.innerHTML = "<p>Chưa có người chơi nào tham gia.</p>";
+            } else {
+                for (let player in game.players) {
+                    roleList.innerHTML += `<p>${player}: ${game.players[player]}</p>`;
+                }
+            }
+            
             roleList.classList.remove("hidden");
+        }
+        
+        // Hàm xóa phòng
+        async function deleteRoom(code) {
+            if (confirm(`Bạn có chắc chắn muốn xóa phòng ${code}?`)) {
+                await db.ref('games/' + code).remove();
+                
+                if (code === currentGameCode) {
+                    currentGameCode = '';
+                    document.getElementById("adminGameInfo").classList.add("hidden");
+                    document.getElementById("adminStatus").classList.add("hidden");
+                    document.getElementById("roleList").classList.add("hidden");
+                }
+                
+                loadRooms(true);
+                alert("Đã xóa phòng thành công!");
+            }
+        }
+        
+        // Hàm xóa phòng hiện tại
+        function deleteCurrentRoom() {
+            if (currentGameCode) {
+                deleteRoom(currentGameCode);
+            } else {
+                alert("Không có phòng nào được chọn!");
+            }
         }
     </script>
 </body>
