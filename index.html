@@ -1254,7 +1254,7 @@
             statusElement.classList.remove('hidden');
         }
 
-        // Hàm tham gia trò chơi đã chọn
+        // Thay đổi trong hàm joinSelectedGame()
         async function joinSelectedGame() {
             playerName = document.getElementById('playerName').value.trim();
             
@@ -1286,30 +1286,48 @@
                     return;
                 }
                 
-                if (game.players[playerName]) {
+                // Kiểm tra xem tên người chơi đã tồn tại chưa
+                const isExistingPlayer = game.players.hasOwnProperty(playerName);
+                const storedName = localStorage.getItem('playerName');
+                const storedGameCode = localStorage.getItem('currentGame');
+                const isSamePlayer = (storedName === playerName && storedGameCode === selectedGameCode);
+                
+                // Nếu tên đã tồn tại và không phải người chơi cũ quay lại
+                if (isExistingPlayer && !isSamePlayer) {
                     showJoinStatus('Tên người chơi đã tồn tại trong phòng này!', 'error');
                     return;
                 }
                 
-                // Lọc vai trò còn trống
-                let availableRoles = game.roles.filter(role => 
-                    !Object.values(game.players).includes(role)
-                );
+                let role = '';
                 
-                if (availableRoles.length === 0) {
-                    showJoinStatus('Không còn vai trò nào!', 'error');
-                    return;
+                if (isExistingPlayer) {
+                    // Người chơi cũ quay lại - sử dụng vai trò cũ
+                    role = game.players[playerName];
+                    showJoinStatus(`Chào mừng trở lại! Vai trò của bạn là: ${role}`, 'success');
+                } else {
+                    // Người chơi mới - cần phân vai trò mới
+                    // Lọc vai trò còn trống
+                    let availableRoles = game.roles.filter(role => 
+                        !Object.values(game.players).includes(role)
+                    );
+                    
+                    if (availableRoles.length === 0) {
+                        showJoinStatus('Không còn vai trò nào!', 'error');
+                        return;
+                    }
+                    
+                    // Chọn vai trò ngẫu nhiên
+                    role = availableRoles[Math.floor(Math.random() * availableRoles.length)];
+                    
+                    // Cập nhật người chơi vào database
+                    await gameRef.child('players').update({ [playerName]: role });
+                    showJoinStatus(`Bạn đã tham gia thành công với vai trò: ${role}`, 'success');
                 }
                 
-                // Chọn vai trò ngẫu nhiên
-                let role = availableRoles[Math.floor(Math.random() * availableRoles.length)];
-                
-                // Cập nhật người chơi vào database
-                await gameRef.child('players').update({ [playerName]: role });
-                
-                // Lưu tên người chơi và mã phòng vào localStorage
+                // Lưu thông tin người chơi vào localStorage
                 localStorage.setItem('playerName', playerName);
                 localStorage.setItem('currentGame', selectedGameCode);
+                localStorage.setItem('playerRole', role);
                 
                 // Hiển thị vai trò
                 document.getElementById('role').textContent = role;
@@ -1319,11 +1337,105 @@
                 document.getElementById('playerVotingContainer').classList.remove('hidden');
                 listenToVotingSession(selectedGameCode);
                 
-                showJoinStatus(`Bạn đã tham gia thành công với vai trò: ${role}`, 'success');
-                
             } catch (error) {
                 console.error('Lỗi khi tham gia trò chơi:', error);
                 showJoinStatus('Đã xảy ra lỗi khi tham gia trò chơi. Vui lòng thử lại!', 'error');
+            }
+        }
+        
+        // Cải thiện hàm checkPlayerStatus để xử lý trường hợp người chơi quay lại
+        async function checkPlayerStatus(gameCode, name) {
+            try {
+                const snapshot = await db.ref(`games/${gameCode}/players/${name}`).once('value');
+                
+                if (snapshot.exists()) {
+                    // Người chơi tồn tại trong phòng - hiển thị vai trò
+                    const role = snapshot.val();
+                    document.getElementById('role').textContent = role;
+                    document.getElementById('roleResult').classList.remove('hidden');
+                    
+                    // Lưu vai trò vào localStorage nếu chưa có
+                    if (!localStorage.getItem('playerRole')) {
+                        localStorage.setItem('playerRole', role);
+                    }
+                    
+                    // Hiển thị thông báo chào mừng trở lại
+                    showJoinStatus(`Chào mừng trở lại! Bạn đang chơi với vai trò: ${role}`, 'success');
+                    
+                    // Hiển thị trạng thái phòng
+                    updatePlayerStatus(gameCode);
+                    
+                    // Lắng nghe phiên bỏ phiếu
+                    listenToVotingSession(gameCode);
+                    document.getElementById('playerVotingContainer').classList.remove('hidden');
+                } else {
+                    // Trường hợp tên người chơi không còn trong phòng
+                    // Có thể là phòng đã được làm mới hoặc người chơi đã bị xóa
+                    
+                    // Xóa thông tin cũ
+                    localStorage.removeItem('currentGame');
+                    localStorage.removeItem('playerName');
+                    localStorage.removeItem('playerRole');
+                    
+                    // Hiển thị thông báo
+                    showJoinStatus('Phiên của bạn đã hết hạn. Vui lòng tham gia lại.', 'error');
+                    
+                    // Quay về danh sách phòng
+                    backToRoomList();
+                }
+            } catch (error) {
+                console.error('Lỗi khi kiểm tra trạng thái:', error);
+                showJoinStatus('Đã xảy ra lỗi. Vui lòng tham gia lại.', 'error');
+                
+                // Xóa thông tin cũ trong trường hợp lỗi
+                localStorage.removeItem('currentGame');
+                localStorage.removeItem('playerName');
+                localStorage.removeItem('playerRole');
+                
+                // Quay về danh sách phòng
+                backToRoomList();
+            }
+        }
+        
+        // Cập nhật hàm activatePlayerUI để xử lý tốt hơn khi người chơi quay lại
+        function activatePlayerUI() {
+            isGameMaster = false;
+            hideAllContainers();
+            
+            document.getElementById('playerContainer').classList.remove('hidden');
+            
+            // Kiểm tra xem có đang tham gia phòng nào không
+            const savedGameCode = localStorage.getItem('currentGame');
+            const savedName = localStorage.getItem('playerName');
+            
+            if (savedGameCode && savedName) {
+                // Kiểm tra xem phòng có còn tồn tại không
+                db.ref(`games/${savedGameCode}`).once('value').then(snapshot => {
+                    if (snapshot.exists()) {
+                        // Phòng vẫn tồn tại - khôi phục phiên
+                        document.getElementById('selectedRoomCode').textContent = savedGameCode;
+                        document.getElementById('playerName').value = savedName;
+                        document.getElementById('roomSelectionArea').classList.add('hidden');
+                        document.getElementById('joinArea').classList.remove('hidden');
+                        
+                        // Tải lại thông tin người chơi và trạng thái bỏ phiếu
+                        checkPlayerStatus(savedGameCode, savedName);
+                    } else {
+                        // Phòng không còn tồn tại
+                        localStorage.removeItem('currentGame');
+                        localStorage.removeItem('playerName');
+                        localStorage.removeItem('playerRole');
+                        
+                        // Hiển thị thông báo và tải danh sách phòng mới
+                        loadRooms(false);
+                    }
+                }).catch(error => {
+                    console.error("Lỗi khi kiểm tra phòng:", error);
+                    loadRooms(false);
+                });
+            } else {
+                // Tải danh sách phòng cho người chơi mới
+                loadRooms(false);
             }
         }
 
