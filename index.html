@@ -863,6 +863,12 @@
                     <div class="loader" style="margin: 15px auto;"></div>
                 </div>
                 
+                <div id="gameEndedNotice" class="hidden role-display" style="background-color: #ffebee; border-left-color: var(--danger-color);">
+                    <h3>Trò chơi đã kết thúc</h3>
+                    <p>Trò chơi đã kết thúc, vui lòng chờ quản trò bắt đầu lại trò chơi.</p>
+                    <div class="loader" style="margin: 15px auto;"></div>
+                </div>
+                
                 <button onclick="playerLogout()" style="margin-top: 20px;">Đăng xuất</button>
                 
                 <!-- Phần bỏ phiếu cho người chơi -->
@@ -910,10 +916,11 @@
                     <div class="section-content">
                         <div id="roleTableContainer"></div>
                         
-                        <!-- Thay thế nút "Cập nhật từ Google Sheets" bằng 2 nút mới -->
+                        <!-- Thay thế nút cập nhật từ Google Sheets bằng các nút mới -->
                         <div class="btn-group" style="margin-top: 20px;">
                             <button onclick="refreshRolesFromSheet()" class="secondary">Cập nhật</button>
                             <button onclick="startGameForPlayers()" class="primary" id="startGameButton">Bắt đầu</button>
+                            <button onclick="endGame()" class="delete" id="endGameButton">Kết Thúc Trò Chơi</button>
                         </div>
                     </div>
                 </div>
@@ -1175,14 +1182,13 @@
                     };
                 });
                 
-                // Giữ lại trạng thái đã đăng nhập và trạng thái sống/chết của người chơi cũ
+                // Giữ lại trạng thái đã đăng nhập của người chơi cũ
                 if (gameData.players) {
                     Object.entries(gameData.players).forEach(([playerName, playerData]) => {
                         if (playersFromSheet[playerName]) {
-                            // Nếu người chơi đã tồn tại, giữ lại trạng thái cũ
+                            // Nếu người chơi đã tồn tại, giữ lại trạng thái đăng nhập
                             if (typeof playerData === 'object') {
-                                playersFromSheet[playerName].status = playerData.status || 'alive';
-                                playersFromSheet[playerName].roleRevealed = playerData.roleRevealed || false;
+                                playersFromSheet[playerName].status = 'alive'; // Đặt lại là còn sống khi bắt đầu lại
                             }
                         }
                     });
@@ -1195,7 +1201,12 @@
                     lastUpdate: firebase.database.ServerValue.TIMESTAMP
                 });
                 
-                alert('Đã cập nhật vai trò cho người chơi thành công!');
+                // Hiển thị thông báo thành công
+                if (gameData.gameEnded) {
+                    alert('Đã cập nhật vai trò mới cho người chơi thành công! Bạn có thể bắt đầu lại trò chơi.');
+                } else {
+                    alert('Đã cập nhật vai trò cho người chơi thành công!');
+                }
                 
             } catch (error) {
                 console.error('Lỗi khi cập nhật từ Google Sheets:', error);
@@ -1210,14 +1221,24 @@
                 return;
             }
             
+            // Kiểm tra xem trò chơi đã kết thúc trước đó chưa
+            const gameSnapshot = await db.ref('games/' + currentGameCode).once('value');
+            const gameData = gameSnapshot.val();
+            const isRestart = gameData && gameData.gameEnded === true;
+            
+            const confirmMessage = isRestart 
+                ? 'Bạn có chắc chắn muốn bắt đầu lại trò chơi? Vai trò mới sẽ được hiển thị cho tất cả người chơi.'
+                : 'Bạn có chắc chắn muốn bắt đầu trò chơi? Vai trò sẽ được hiển thị cho tất cả người chơi.';
+            
             showConfirmModal(
-                'Bắt đầu trò chơi',
-                'Bạn có chắc chắn muốn bắt đầu trò chơi? Vai trò sẽ được hiển thị cho tất cả người chơi.',
+                isRestart ? 'Bắt đầu lại trò chơi' : 'Bắt đầu trò chơi',
+                confirmMessage,
                 async function() {
                     try {
-                        // Cập nhật trạng thái game đã bắt đầu
+                        // Cập nhật trạng thái game
                         await db.ref('games/' + currentGameCode).update({
                             gameStarted: true,
+                            gameEnded: false,
                             startedAt: firebase.database.ServerValue.TIMESTAMP
                         });
                         
@@ -1235,15 +1256,67 @@
                             await playersRef.update(updates);
                         }
                         
-                        // Thay đổi nội dung nút bắt đầu
+                        // Thay đổi nội dung nút
                         document.getElementById('startGameButton').textContent = 'Trò chơi đã bắt đầu';
                         document.getElementById('startGameButton').disabled = true;
+                        document.getElementById('endGameButton').textContent = 'Kết Thúc Trò Chơi';
+                        document.getElementById('endGameButton').disabled = false;
                         
-                        alert('Trò chơi đã bắt đầu! Tất cả người chơi đã nhận vai trò.');
+                        const message = isRestart ? 'Trò chơi đã bắt đầu lại! Tất cả người chơi đã nhận vai trò mới.' : 'Trò chơi đã bắt đầu! Tất cả người chơi đã nhận vai trò.';
+                        alert(message);
                         
                     } catch (error) {
                         console.error('Lỗi khi bắt đầu trò chơi:', error);
                         alert('Đã xảy ra lỗi khi bắt đầu trò chơi!');
+                    }
+                }
+            );
+        }
+        
+        // Hàm kết thúc trò chơi
+        async function endGame() {
+            if (!currentGameCode) {
+                alert('Vui lòng chọn một phòng trước!');
+                return;
+            }
+            
+            showConfirmModal(
+                'Kết thúc trò chơi',
+                'Bạn có chắc chắn muốn kết thúc trò chơi? Tất cả người chơi sẽ trở về màn hình chờ.',
+                async function() {
+                    try {
+                        // Cập nhật trạng thái game đã kết thúc
+                        await db.ref('games/' + currentGameCode).update({
+                            gameStarted: false,
+                            gameEnded: true,
+                            endedAt: firebase.database.ServerValue.TIMESTAMP
+                        });
+                        
+                        // Đặt lại trạng thái hiển thị vai trò cho tất cả người chơi
+                        const playersRef = db.ref('games/' + currentGameCode + '/players');
+                        const playersSnapshot = await playersRef.once('value');
+                        const players = playersSnapshot.val();
+                        
+                        if (players) {
+                            const updates = {};
+                            Object.keys(players).forEach(playerName => {
+                                updates[playerName + '/roleRevealed'] = false;
+                            });
+                            
+                            await playersRef.update(updates);
+                        }
+                        
+                        // Cập nhật nội dung nút
+                        document.getElementById('startGameButton').textContent = 'Bắt Đầu Lại';
+                        document.getElementById('startGameButton').disabled = false;
+                        document.getElementById('endGameButton').textContent = 'Trò chơi đã kết thúc';
+                        document.getElementById('endGameButton').disabled = true;
+                        
+                        alert('Trò chơi đã kết thúc! Tất cả người chơi đã trở về màn hình chờ.');
+                        
+                    } catch (error) {
+                        console.error('Lỗi khi kết thúc trò chơi:', error);
+                        alert('Đã xảy ra lỗi khi kết thúc trò chơi!');
                     }
                 }
             );
@@ -1538,14 +1611,22 @@
                 // Hiển thị màn hình thông tin vai trò
                 document.getElementById('playerRoleView').classList.remove('hidden');
                 
-                // Kiểm tra xem game đã bắt đầu chưa
+                // Kiểm tra trạng thái game
                 const gameStarted = gameData.gameStarted || false;
+                const gameEnded = gameData.gameEnded || false;
                 
-                if (gameStarted && roleRevealed) {
+                if (gameEnded) {
+                    // Game đã kết thúc, hiển thị thông báo trò chơi kết thúc
+                    document.getElementById('roleResult').classList.add('hidden');
+                    document.getElementById('waitingForGameStart').classList.add('hidden');
+                    document.getElementById('gameEndedNotice').classList.remove('hidden');
+                    showLoginStatus('Đăng nhập thành công! Trò chơi đã kết thúc, vui lòng chờ quản trò bắt đầu lại.', 'info');
+                } else if (gameStarted && roleRevealed) {
                     // Game đã bắt đầu, hiển thị vai trò
                     document.getElementById('role').textContent = role;
                     document.getElementById('roleResult').classList.remove('hidden');
                     document.getElementById('waitingForGameStart').classList.add('hidden');
+                    document.getElementById('gameEndedNotice').classList.add('hidden');
                     
                     // Hiển thị trạng thái dead nếu cần
                     if (playerIsDead) {
@@ -1558,9 +1639,10 @@
                     
                     showLoginStatus('Đăng nhập thành công!', 'success');
                 } else {
-                    // Game chưa bắt đầu, hiển thị thông báo chờ đợi
+                    // Game chưa bắt đầu hoặc vai trò chưa được tiết lộ, hiển thị thông báo chờ đợi
                     document.getElementById('roleResult').classList.add('hidden');
                     document.getElementById('waitingForGameStart').classList.remove('hidden');
+                    document.getElementById('gameEndedNotice').classList.add('hidden');
                     showLoginStatus('Đăng nhập thành công! Vui lòng chờ quản trò bắt đầu trò chơi.', 'info');
                 }
                 
@@ -1720,17 +1802,42 @@
             });
             
             // Lắng nghe trạng thái game
-            db.ref(`games/${gameCode}/gameStarted`).on('value', (snapshot) => {
-                if (snapshot.exists() && snapshot.val() === true) {
-                    // Game đã bắt đầu, cập nhật trạng thái của người chơi
-                    db.ref(`games/${gameCode}/players/${loginName}/roleRevealed`).once('value', (roleSnapshot) => {
-                        if (roleSnapshot.exists() && roleSnapshot.val() === false) {
-                            // Nếu vai trò chưa được tiết lộ, tiết lộ nó
-                            db.ref(`games/${gameCode}/players/${loginName}`).update({
-                                roleRevealed: true
-                            });
+            db.ref(`games/${gameCode}`).on('value', (snapshot) => {
+                if (!snapshot.exists()) return;
+                
+                const gameData = snapshot.val();
+                const gameStarted = gameData.gameStarted || false;
+                const gameEnded = gameData.gameEnded || false;
+                
+                // Cập nhật giao diện người chơi dựa trên trạng thái game
+                if (gameEnded) {
+                    // Trò chơi đã kết thúc
+                    document.getElementById('roleResult').classList.add('hidden');
+                    document.getElementById('waitingForGameStart').classList.add('hidden');
+                    document.getElementById('gameEndedNotice').classList.remove('hidden');
+                } else if (gameStarted) {
+                    // Kiểm tra vai trò đã được hiển thị chưa
+                    db.ref(`games/${gameCode}/players/${loginName}`).once('value', (playerSnapshot) => {
+                        if (playerSnapshot.exists()) {
+                            const playerData = playerSnapshot.val();
+                            if (typeof playerData === 'object' && playerData.roleRevealed) {
+                                // Hiển thị vai trò
+                                document.getElementById('roleResult').classList.remove('hidden');
+                                document.getElementById('waitingForGameStart').classList.add('hidden');
+                                document.getElementById('gameEndedNotice').classList.add('hidden');
+                            } else {
+                                // Vẫn đang chờ hiển thị vai trò
+                                document.getElementById('roleResult').classList.add('hidden');
+                                document.getElementById('waitingForGameStart').classList.remove('hidden');
+                                document.getElementById('gameEndedNotice').classList.add('hidden');
+                            }
                         }
                     });
+                } else {
+                    // Trò chơi chưa bắt đầu
+                    document.getElementById('roleResult').classList.add('hidden');
+                    document.getElementById('waitingForGameStart').classList.remove('hidden');
+                    document.getElementById('gameEndedNotice').classList.add('hidden');
                 }
             });
         }
@@ -1789,8 +1896,9 @@
                     createdAt: firebase.database.ServerValue.TIMESTAMP,
                     nightNotes: initialNotes,
                     voting: initialVoting,
-                    gameStarted: false,   // Thêm trạng thái game chưa bắt đầu
-                    loggedPlayers: {}     // Theo dõi người chơi đăng nhập
+                    gameStarted: false,
+                    gameEnded: false,  // Thêm trạng thái game chưa kết thúc
+                    loggedPlayers: {}
                 });
                 
                 document.getElementById('code').textContent = code;
@@ -1876,7 +1984,9 @@
 
                     // Thêm thông tin trạng thái game
                     let gameStatus = '';
-                    if (game.gameStarted) {
+                    if (game.gameEnded) {
+                        gameStatus = ' <span style="color: var(--danger-color);">[Đã kết thúc]</span>';
+                    } else if (game.gameStarted) {
                         gameStatus = ' <span style="color: var(--primary-color);">[Đã bắt đầu]</span>';
                     } else {
                         gameStatus = ' <span style="color: var(--warning-color);">[Chờ bắt đầu]</span>';
@@ -1962,14 +2072,30 @@
             document.getElementById('adminTotalPlayers').textContent = playerCount;
             document.getElementById('loggedPlayersCount').textContent = loggedPlayersCount;
             
-            // Cập nhật trạng thái nút bắt đầu
+            // Cập nhật trạng thái các nút
             const startGameButton = document.getElementById('startGameButton');
-            if (game.gameStarted) {
+            const endGameButton = document.getElementById('endGameButton');
+            const gameStarted = game.gameStarted || false;
+            const gameEnded = game.gameEnded || false;
+            
+            if (gameStarted && !gameEnded) {
+                // Trò chơi đang diễn ra
                 startGameButton.textContent = 'Trò chơi đã bắt đầu';
                 startGameButton.disabled = true;
-            } else {
-                startGameButton.textContent = 'Bắt đầu';
+                endGameButton.textContent = 'Kết Thúc Trò Chơi';
+                endGameButton.disabled = false;
+            } else if (gameEnded) {
+                // Trò chơi đã kết thúc
+                startGameButton.textContent = 'Bắt Đầu Lại';
                 startGameButton.disabled = false;
+                endGameButton.textContent = 'Trò chơi đã kết thúc';
+                endGameButton.disabled = true;
+            } else {
+                // Trò chơi chưa bắt đầu
+                startGameButton.textContent = 'Bắt Đầu';
+                startGameButton.disabled = false;
+                endGameButton.textContent = 'Kết Thúc Trò Chơi';
+                endGameButton.disabled = true;
             }
             
             // Thay đổi màu dựa trên tỷ lệ
