@@ -19,6 +19,8 @@
             --warning-color: #ff9800;
             --voting-color: #9c27b0;
             --voting-dark: #7b1fa2;
+            --skip-color: #9e9e9e;
+            --skip-dark: #757575;
         }
         
         * {
@@ -144,6 +146,14 @@
 
         button.warning:hover {
             background-color: #e69500;
+        }
+
+        button.skip {
+            background-color: var(--skip-color);
+        }
+
+        button.skip:hover {
+            background-color: var(--skip-dark);
         }
 
         button.icon {
@@ -524,6 +534,21 @@
             border-color: var(--accent-color);
         }
 
+        .vote-option.skip-option {
+            background-color: #f5f5f5;
+            border-color: transparent;
+        }
+
+        .vote-option.skip-option:hover {
+            background-color: #e0e0e0;
+            border-color: var(--skip-color);
+        }
+
+        .vote-option.skip-option.selected {
+            background-color: #e0e0e0;
+            border-color: var(--skip-dark);
+        }
+
         .vote-count {
             font-weight: bold;
             padding: 5px 10px;
@@ -760,8 +785,7 @@
             
             <div class="login-form">
                 <h3>Đăng nhập</h3>
-                <p>Nhập tên đăng nhập và mật khẩu của bạn để xem vai trò</p>
-                <input type="text" id="playerLoginName" placeholder="Tên đăng nhập">
+                <p>Nhập mật khẩu của bạn để xem vai trò</p>
                 <input type="password" id="playerPassword" placeholder="Mật khẩu">
                 <div id="loginStatus" class="hidden status-bar"></div>
                 <button onclick="playerLogin()">Đăng nhập</button>
@@ -889,6 +913,9 @@
         // Link xuất bản từ Google Sheets
         const SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSX4CcsBLZeHbEO2Ykp_FdiwmreveneNzZOFsfwRA3I8QfeKQw_i14akefo5EnTvRAT1XtzKYfJYNQJ/pub?gid=2087787635&single=true&output=csv";
         
+        // Hằng số để bỏ qua khi bỏ phiếu
+        const SKIP_VOTE = "SKIP";
+        
         // Các biến toàn cục
         let currentGameCode = '';
         let playersListener = null;
@@ -958,14 +985,29 @@
                 const csvData = await response.text();
                 
                 // Parse CSV sử dụng PapaParse
-                const parsed = Papa.parse(csvData, { header: true });
+                const parsed = Papa.parse(csvData, { header: false });
                 
                 if (parsed.errors.length > 0) {
                     throw new Error('Lỗi parse CSV: ' + parsed.errors[0].message);
                 }
                 
-                // Lọc dữ liệu hợp lệ
-                sheetsData = parsed.data.filter(row => row['A'] && row['B'] && row['D']);
+                // Lọc dữ liệu hợp lệ - bắt đầu từ dòng 2 (index 1)
+                const validData = [];
+                
+                for (let i = 1; i < parsed.data.length; i++) {
+                    const row = parsed.data[i];
+                    
+                    // Đảm bảo có dữ liệu ở cột A (password), cột L (tên) và cột D (vai trò)
+                    if (row[0] && row[11] && row[3]) {
+                        validData.push({
+                            password: row[0],     // Cột A - mật khẩu
+                            playerName: row[11],  // Cột L - tên người chơi
+                            role: row[3]          // Cột D - vai trò
+                        });
+                    }
+                }
+                
+                sheetsData = validData;
                 
                 document.getElementById('sheetsStatus').innerHTML = `
                     <p style="color: green;">✅ Dữ liệu đã được tải thành công!</p>
@@ -1036,29 +1078,29 @@
                         
                         // Tạo danh sách người chơi mới từ dữ liệu sheets
                         data.forEach(player => {
-                            const loginName = player['B']; // Tên người chơi ở cột B
-                            const role = player['D'];      // Vai trò ở cột D
+                            const playerName = player.playerName; // Tên người chơi từ cột L
+                            const role = player.role;             // Vai trò từ cột D
                             
                             // Nếu người chơi đã tồn tại trong game, giữ nguyên trạng thái
-                            if (gameData.players && gameData.players[loginName]) {
-                                const existingPlayer = gameData.players[loginName];
+                            if (gameData.players && gameData.players[playerName]) {
+                                const existingPlayer = gameData.players[playerName];
                                 
                                 // Nếu là định dạng mới (có status)
                                 if (typeof existingPlayer === 'object') {
-                                    newPlayers[loginName] = {
+                                    newPlayers[playerName] = {
                                         role: role,
                                         status: existingPlayer.status || 'alive'
                                     };
                                 } else {
                                     // Định dạng cũ, chuyển sang định dạng mới
-                                    newPlayers[loginName] = {
+                                    newPlayers[playerName] = {
                                         role: role,
                                         status: 'alive'
                                     };
                                 }
                             } else {
                                 // Người chơi mới
-                                newPlayers[loginName] = {
+                                newPlayers[playerName] = {
                                     role: role,
                                     status: 'alive'
                                 };
@@ -1278,11 +1320,10 @@
         
         // Đăng nhập người chơi
         async function playerLogin() {
-            const loginName = document.getElementById('playerLoginName').value.trim();
             const password = document.getElementById('playerPassword').value;
             
-            if (!loginName) {
-                showLoginStatus('Vui lòng nhập tên đăng nhập!', 'error');
+            if (!password) {
+                showLoginStatus('Vui lòng nhập mật khẩu!', 'error');
                 return;
             }
             
@@ -1295,18 +1336,16 @@
                 }
                 
                 // Tìm thông tin người chơi trong dữ liệu Google Sheets
-                const playerData = sheetsData.find(row => row['B'] === loginName);
+                const playerData = sheetsData.find(player => player.password === password);
                 
                 if (!playerData) {
-                    showLoginStatus('Không tìm thấy tên đăng nhập!', 'error');
-                    return;
-                }
-                
-                // Kiểm tra mật khẩu từ cột A
-                if (password !== playerData['A']) {
                     showLoginStatus('Mật khẩu không đúng!', 'error');
                     return;
                 }
+                
+                // Lấy thông tin từ dữ liệu tìm thấy
+                const loginName = playerData.playerName;
+                const role = playerData.role;
                 
                 // Tìm phòng game đang hoạt động
                 const gamesRef = db.ref('games');
@@ -1330,9 +1369,6 @@
                     showLoginStatus('Không tìm thấy phòng hợp lệ!', 'error');
                     return;
                 }
-                
-                // Lấy vai trò từ dữ liệu Google Sheets
-                const role = playerData['D'];
                 
                 // Kiểm tra xem người chơi đã có trong phòng chưa
                 let playerStatus = 'alive';
@@ -1412,7 +1448,6 @@
             // Hiển thị lại form đăng nhập
             document.querySelector('.login-form').classList.remove('hidden');
             document.getElementById('playerRoleView').classList.add('hidden');
-            document.getElementById('playerLoginName').value = '';
             document.getElementById('playerPassword').value = '';
             document.getElementById('loginStatus').classList.add('hidden');
         }
@@ -1552,8 +1587,8 @@
                 // Chuẩn bị dữ liệu người chơi từ Google Sheets
                 const players = {};
                 sheetsData.forEach(row => {
-                    const playerName = row['B'];
-                    const role = row['D'];
+                    const playerName = row.playerName;
+                    const role = row.role;
                     
                     players[playerName] = {
                         role: role,
@@ -2032,13 +2067,14 @@
                     countdownInterval = null;
                 }
                 
-                // Hiển thị kết quả bỏ phiếu
-                const snapshot = await db.ref('games/' + currentGameCode + '/voting/votes').once('value');
-                const votes = snapshot.val() || {};
-                
+                // Lấy thông tin người chơi và phiếu bầu
                 const playersSnapshot = await db.ref('games/' + currentGameCode + '/players').once('value');
-                const players = playersSnapshot.val() || {};
+                const votesSnapshot = await db.ref('games/' + currentGameCode + '/voting/votes').once('value');
                 
+                const players = playersSnapshot.val() || {};
+                const votes = votesSnapshot.val() || {};
+                
+                // Hiển thị kết quả bỏ phiếu
                 displayVotingResults(votes, players);
                 
             } catch (error) {
@@ -2055,6 +2091,7 @@
             // Đếm số phiếu cho mỗi người chơi
             const voteCounts = {};
             let totalVotes = 0;
+            let skippedVotes = 0;
             
             // Khởi tạo số phiếu cho tất cả người chơi còn sống bằng 0
             Object.entries(players).forEach(([playerName, playerData]) => {
@@ -2065,32 +2102,58 @@
                 }
             });
             
+            // Thêm lựa chọn bỏ qua
+            voteCounts[SKIP_VOTE] = 0;
+            
+            // Đếm số phiếu và số người chơi còn sống
+            let alivePlayers = 0;
+            Object.entries(players).forEach(([playerName, playerData]) => {
+                const status = typeof playerData === 'object' ? (playerData.status || 'alive') : 'alive';
+                if (status !== 'dead') {
+                    alivePlayers++;
+                }
+            });
+            
+            // Tính số người không bỏ phiếu
+            let hasVoted = new Set(Object.keys(votes));
+            let notVotedCount = 0;
+            
+            // Đếm những người chơi còn sống nhưng không bỏ phiếu
+            Object.entries(players).forEach(([playerName, playerData]) => {
+                const status = typeof playerData === 'object' ? (playerData.status || 'alive') : 'alive';
+                if (status !== 'dead' && !hasVoted.has(playerName)) {
+                    notVotedCount++;
+                }
+            });
+            
             // Đếm số phiếu
             Object.entries(votes).forEach(([voter, votedFor]) => {
-                if (voteCounts.hasOwnProperty(votedFor)) {
+                if (votedFor === SKIP_VOTE) {
+                    voteCounts[SKIP_VOTE]++;
+                    skippedVotes++;
+                    totalVotes++;
+                } else if (voteCounts.hasOwnProperty(votedFor)) {
                     voteCounts[votedFor]++;
                     totalVotes++;
                 }
             });
             
-            // Sắp xếp người chơi theo số phiếu nhận được (cao đến thấp)
-            const sortedPlayers = Object.keys(voteCounts).sort((a, b) => {
-                return voteCounts[b] - voteCounts[a];
-            });
+            // Sắp xếp người chơi theo số phiếu nhận được (cao đến thấp), loại bỏ SKIP_VOTE
+            const sortedPlayers = Object.keys(voteCounts)
+                .filter(name => name !== SKIP_VOTE)
+                .sort((a, b) => voteCounts[b] - voteCounts[a]);
             
-            // Tìm người có số phiếu cao nhất
+            // Tìm người có số phiếu cao nhất (không tính SKIP_VOTE)
             let highestVotes = 0;
             let winners = [];
             
             sortedPlayers.forEach(player => {
                 const votes = voteCounts[player];
-                if (votes > 0) {
-                    if (votes > highestVotes) {
-                        highestVotes = votes;
-                        winners = [player];
-                    } else if (votes === highestVotes) {
-                        winners.push(player);
-                    }
+                if (votes > 0 && votes > highestVotes) {
+                    highestVotes = votes;
+                    winners = [player];
+                } else if (votes > 0 && votes === highestVotes) {
+                    winners.push(player);
                 }
             });
             
@@ -2098,12 +2161,19 @@
             resultsContainer.classList.remove('hidden');
             resultsList.innerHTML = '';
             
-            if (totalVotes === 0) {
-                resultsList.innerHTML = '<p>Không có ai bỏ phiếu.</p>';
-                return;
-            }
+            // Hiển thị tổng số phiếu bỏ qua
+            resultsList.innerHTML = `
+                <div class="voting-result-item" style="background-color: #f5f5f5;">
+                    <span>Bỏ qua (đã chọn bỏ qua):</span>
+                    <span>${skippedVotes} phiếu</span>
+                </div>
+                <div class="voting-result-item" style="background-color: #f5f5f5;">
+                    <span>Không bỏ phiếu:</span>
+                    <span>${notVotedCount} người</span>
+                </div>
+            `;
             
-            // Hiển thị kết quả của từng người chơi
+            // Hiển thị kết quả của từng người chơi (không hiển thị SKIP_VOTE)
             sortedPlayers.forEach(player => {
                 if (voteCounts[player] > 0) {
                     const resultItem = document.createElement('div');
@@ -2284,11 +2354,23 @@
                 
                 // Nếu đã bỏ phiếu, hiển thị xác nhận
                 if (myVote) {
-                    document.getElementById('playerVoteChoice').textContent = myVote;
+                    document.getElementById('playerVoteChoice').textContent = myVote === SKIP_VOTE ? 'Bỏ qua' : myVote;
                     document.getElementById('playerVoteConfirmation').classList.remove('hidden');
                 } else {
                     document.getElementById('playerVoteConfirmation').classList.add('hidden');
                 }
+                
+                // Thêm tùy chọn bỏ qua
+                const skipOption = document.createElement('div');
+                skipOption.className = 'vote-option skip-option';
+                if (myVote === SKIP_VOTE) {
+                    skipOption.classList.add('selected');
+                }
+                skipOption.innerHTML = `<span>⊘ Bỏ qua</span>`;
+                skipOption.onclick = function() {
+                    submitVote(gameCode, SKIP_VOTE);
+                };
+                votingOptions.appendChild(skipOption);
                 
                 // Tạo danh sách người chơi còn sống để bỏ phiếu (loại trừ người chơi hiện tại)
                 Object.entries(allPlayers).forEach(([name, playerData]) => {
@@ -2317,9 +2399,12 @@
                     }
                 });
                 
-                // Hiển thị thông báo nếu không còn ai để bỏ phiếu
-                if (votingOptions.children.length === 0) {
-                    votingOptions.innerHTML = '<p>Không có người chơi nào để bỏ phiếu.</p>';
+                // Hiển thị thông báo nếu không còn ai để bỏ phiếu ngoài tùy chọn bỏ qua
+                if (votingOptions.children.length === 1) {
+                    const message = document.createElement('p');
+                    message.style.margin = '15px 0';
+                    message.textContent = 'Không có người chơi nào để bỏ phiếu.';
+                    votingOptions.appendChild(message);
                 }
                 
             } catch (error) {
@@ -2329,7 +2414,7 @@
         
         // Hàm bỏ phiếu
         async function submitVote(gameCode, votedFor) {
-            if (!gameCode || !playerName || !votedFor || playerIsDead) return;
+            if (!gameCode || !playerName || playerIsDead) return;
             
             try {
                 // Kiểm tra xem phiên bỏ phiếu có còn diễn ra không
@@ -2343,16 +2428,24 @@
                 await db.ref('games/' + gameCode + '/voting/votes/' + playerName).set(votedFor);
                 
                 // Cập nhật UI
-                document.getElementById('playerVoteChoice').textContent = votedFor;
+                document.getElementById('playerVoteChoice').textContent = votedFor === SKIP_VOTE ? 'Bỏ qua' : votedFor;
                 document.getElementById('playerVoteConfirmation').classList.remove('hidden');
                 
                 // Cập nhật trạng thái lựa chọn
                 const options = document.querySelectorAll('.vote-option');
                 options.forEach(option => {
-                    const name = option.querySelector('span').textContent;
-                    if (name === votedFor) {
+                    const isSkipOption = option.classList.contains('skip-option');
+                    
+                    if (isSkipOption && votedFor === SKIP_VOTE) {
                         option.classList.add('selected');
-                    } else {
+                    } else if (!isSkipOption) {
+                        const name = option.querySelector('span').textContent;
+                        if (name === votedFor) {
+                            option.classList.add('selected');
+                        } else {
+                            option.classList.remove('selected');
+                        }
+                    } else if (isSkipOption && votedFor !== SKIP_VOTE) {
                         option.classList.remove('selected');
                     }
                 });
@@ -2425,7 +2518,16 @@
             }
             
             // Thêm lại nút thêm đêm mới
-            tabsContainer.appendChild(addNightBtn || document.createElement('button'));
+            tabsContainer.appendChild(addNightBtn || createAddNightButton());
+        }
+        
+        // Tạo nút thêm đêm mới
+        function createAddNightButton() {
+            const btn = document.createElement('button');
+            btn.className = 'add-night-btn';
+            btn.textContent = '+ Thêm đêm';
+            btn.onclick = addNewNight;
+            return btn;
         }
         
         // Hiển thị nội dung đêm
