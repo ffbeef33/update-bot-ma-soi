@@ -137,6 +137,25 @@
         button.voting:hover {
             background-color: var(--voting-dark);
         }
+
+        button.warning {
+            background-color: var(--warning-color);
+        }
+
+        button.warning:hover {
+            background-color: #e69500;
+        }
+
+        button.icon {
+            width: auto;
+            min-width: 40px;
+            height: 40px;
+            padding: 8px;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
         
         .btn-group {
             display: flex;
@@ -242,6 +261,31 @@
         .role-table tr:hover {
             background-color: #f0f8ff;
         }
+
+        .role-table tr.dead {
+            background-color: #ffebee;
+            color: #9e9e9e;
+            text-decoration: line-through;
+        }
+
+        .role-table .player-actions {
+            display: flex;
+            gap: 5px;
+        }
+
+        .role-table .player-status {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 12px;
+            font-weight: bold;
+            margin-left: 6px;
+        }
+
+        .role-table .dead-status {
+            background-color: #ffebee;
+            color: #b71c1c;
+        }
         
         /* Role display for player */
         .role-display {
@@ -252,6 +296,12 @@
             font-weight: bold;
             text-align: center;
             border-left: 4px solid var(--primary-color);
+        }
+
+        .role-display.dead {
+            background-color: #ffebee;
+            border-left-color: var(--danger-color);
+            color: #b71c1c;
         }
         
         /* Modal styles */
@@ -534,6 +584,27 @@
             color: var(--voting-color);
         }
 
+        /* Role summary box */
+        .role-summary {
+            margin-top: 15px;
+            padding: 15px;
+            background-color: #e8f5e9;
+            border-radius: 5px;
+            border-left: 4px solid var(--primary-color);
+        }
+
+        .role-count-list {
+            list-style: none;
+            margin-top: 10px;
+        }
+
+        .role-count-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 5px 0;
+            border-bottom: 1px dashed #ddd;
+        }
+
         /* Animation for role change */
         @keyframes flash {
             0%, 100% { background-color: #e8f5e9; }
@@ -574,6 +645,13 @@
             .night-tab {
                 font-size: 14px;
                 padding: 6px 12px;
+            }
+
+            .role-table .player-actions button {
+                padding: 4px;
+                min-width: 30px;
+                height: 30px;
+                font-size: 12px;
             }
         }
     </style>
@@ -618,11 +696,31 @@
             </div>
         </div>
 
+        <!-- Modal xác nhận -->
+        <div id="confirmModal" class="modal-overlay hidden">
+            <div class="modal">
+                <h3 id="confirmTitle">Xác nhận hành động</h3>
+                <p id="confirmMessage">Bạn có chắc chắn muốn thực hiện hành động này?</p>
+                <div class="btn-group">
+                    <button id="confirmYesBtn" onclick="handleConfirmYes()">Đồng ý</button>
+                    <button onclick="closeConfirmModal()">Hủy</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Phần thiết lập trò chơi (quản trò) -->
         <div id="setupContainer" class="hidden section">
             <h2>Thiết lập trò chơi</h2>
             <input type="number" id="playerCount" placeholder="Số người chơi" min="3">
             <input type="text" id="rolesInput" placeholder="Danh sách vai trò (cách nhau bởi dấu phẩy)">
+            
+            <div id="roleSummary" class="role-summary hidden">
+                <h3>Tóm tắt vai trò</h3>
+                <p>Tổng số vai trò: <span id="totalRoles">0</span></p>
+                <p>Chi tiết:</p>
+                <ul id="roleCountList" class="role-count-list"></ul>
+            </div>
+            
             <button onclick="setupGame()">Tạo trò chơi</button>
             <div id="gameCode" class="hidden role-display">
                 Mã trò chơi: <span id="code" class="room-code"></span>
@@ -655,6 +753,9 @@
                 </div>
                 <div id="roleResult" class="hidden role-display">
                     Vai trò của bạn: <span id="role"></span>
+                    <div id="deadNotice" class="hidden" style="margin-top: 10px; color: #b71c1c;">
+                        Bạn đã bị loại khỏi trò chơi
+                    </div>
                 </div>
                 
                 <!-- Phần bỏ phiếu cho người chơi -->
@@ -746,7 +847,7 @@
             </p>
         </div>
     </div>
-
+    
     <script>
         // Cấu hình Firebase
         const firebaseConfig = {
@@ -775,6 +876,8 @@
         const MASTER_PASSWORD = 'trungdepqua';
         let currentNightTab = 1;
         let deviceId = '';
+        let confirmCallback = null;
+        let playerIsDead = false;
         
         // Khi trang đã tải xong
         document.addEventListener('DOMContentLoaded', initApp);
@@ -805,12 +908,8 @@
             // Hiển thị nút chuyển đổi vai trò
             document.getElementById('switchRole').classList.remove('hidden');
             
-            // Tải lại phiên bỏ phiếu nếu có
-            playerName = localStorage.getItem('playerName') || '';
-            const savedGameCode = localStorage.getItem('currentGame');
-            if (savedGameCode && playerName && savedRole === 'player') {
-                listenToVotingSession(savedGameCode);
-            }
+            // Thiết lập sự kiện cho trường nhập vai trò
+            document.getElementById('rolesInput').addEventListener('input', updateRoleSummary);
         }
         
         // Hàm tạo hoặc lấy ID thiết bị
@@ -863,6 +962,26 @@
         // Hủy modal mật khẩu
         function cancelPasswordModal() {
             document.getElementById('passwordModal').classList.add('hidden');
+        }
+        
+        // Modal xác nhận
+        function showConfirmModal(title, message, callback) {
+            document.getElementById('confirmTitle').textContent = title;
+            document.getElementById('confirmMessage').textContent = message;
+            document.getElementById('confirmModal').classList.remove('hidden');
+            confirmCallback = callback;
+        }
+        
+        function closeConfirmModal() {
+            document.getElementById('confirmModal').classList.add('hidden');
+            confirmCallback = null;
+        }
+        
+        function handleConfirmYes() {
+            if (confirmCallback) {
+                confirmCallback();
+            }
+            closeConfirmModal();
         }
         
         // Xác minh mật khẩu quản trò
@@ -965,6 +1084,7 @@
                         localStorage.removeItem('currentGame');
                         localStorage.removeItem('playerName');
                         localStorage.removeItem('playerRole');
+                        localStorage.removeItem('playerStatus');
                         
                         // Xóa thông tin thiết bị đã tham gia phòng này
                         db.ref(`device_rooms/${deviceId}/${savedGameCode}`).remove().catch(error => {
@@ -987,60 +1107,127 @@
         // Kiểm tra trạng thái người chơi nếu đã tham gia
         async function checkPlayerStatus(gameCode, name) {
             try {
-                const snapshot = await db.ref(`games/${gameCode}/players/${name}`).once('value');
+                const playerRef = db.ref(`games/${gameCode}/players/${name}`);
+                const snapshot = await playerRef.once('value');
                 
-                if (snapshot.exists()) {
-                    // Người chơi tồn tại trong phòng - hiển thị vai trò
-                    const role = snapshot.val();
-                    document.getElementById('role').textContent = role;
-                    document.getElementById('roleResult').classList.remove('hidden');
-                    
-                    // Lưu thông tin thiết bị đã tham gia phòng này
-                    await db.ref(`device_rooms/${deviceId}/${gameCode}`).set({
-                        playerName: name,
-                        joinedAt: firebase.database.ServerValue.TIMESTAMP
-                    });
-                    
-                    // Lưu vào localStorage
-                    localStorage.setItem('playerName', name);
-                    localStorage.setItem('currentGame', gameCode);
-                    localStorage.setItem('playerRole', role);
-                    
-                    // Hiển thị thông báo chào mừng trở lại
-                    showJoinStatus(`Chào mừng trở lại! Bạn đang chơi với vai trò: ${role}`, 'success');
-                    
-                    // Hiển thị trạng thái phòng
-                    updatePlayerStatus(gameCode);
-                    
-                    // Lắng nghe phiên bỏ phiếu
-                    listenToVotingSession(gameCode);
-                    listenToGameRestart(gameCode, name);
-                    document.getElementById('playerVotingContainer').classList.remove('hidden');
-                } else {
-                    // Trường hợp tên người chơi không còn trong phòng
-                    // Xóa thông tin thiết bị đã tham gia phòng này
-                    await db.ref(`device_rooms/${deviceId}/${gameCode}`).remove();
-                    
-                    // Xóa thông tin cũ
-                    localStorage.removeItem('currentGame');
-                    localStorage.removeItem('playerName');
-                    localStorage.removeItem('playerRole');
-                    
-                    // Hiển thị thông báo
-                    showJoinStatus('Phiên của bạn đã hết hạn. Vui lòng tham gia lại.', 'error');
-                    
-                    // Quay về danh sách phòng
-                    backToRoomList();
+                if (!snapshot.exists()) {
+                    // Người chơi không còn trong phòng
+                    await handlePlayerNotInRoom(gameCode);
+                    return;
                 }
+                
+                // Lấy thông tin người chơi
+                const playerData = snapshot.val();
+                
+                // Kiểm tra xem người chơi đã chết chưa
+                if (typeof playerData === 'object' && playerData.status === 'dead') {
+                    playerIsDead = true;
+                    const roleValue = playerData.role || 'Không xác định';
+                    
+                    // Hiển thị thông báo đã chết
+                    document.getElementById('role').textContent = roleValue;
+                    document.getElementById('roleResult').classList.add('dead');
+                    document.getElementById('deadNotice').classList.remove('hidden');
+                } else {
+                    // Người chơi vẫn còn sống
+                    playerIsDead = false;
+                    const roleValue = typeof playerData === 'object' ? playerData.role : playerData;
+                    
+                    document.getElementById('role').textContent = roleValue;
+                    document.getElementById('roleResult').classList.remove('dead');
+                    document.getElementById('deadNotice').classList.add('hidden');
+                }
+                
+                document.getElementById('roleResult').classList.remove('hidden');
+                
+                // Lưu thông tin thiết bị đã tham gia phòng này
+                await db.ref(`device_rooms/${deviceId}/${gameCode}`).set({
+                    playerName: name,
+                    joinedAt: firebase.database.ServerValue.TIMESTAMP
+                });
+                
+                // Lưu vào localStorage
+                localStorage.setItem('playerName', name);
+                localStorage.setItem('currentGame', gameCode);
+                localStorage.setItem('playerStatus', playerIsDead ? 'dead' : 'alive');
+                
+                // Hiển thị thông báo chào mừng trở lại
+                const statusMessage = playerIsDead ? 
+                    `Chào mừng trở lại! Bạn đã bị loại khỏi trò chơi.` : 
+                    `Chào mừng trở lại! Bạn đang chơi với vai trò: ${document.getElementById('role').textContent}`;
+                
+                showJoinStatus(statusMessage, playerIsDead ? 'error' : 'success');
+                
+                // Hiển thị trạng thái phòng
+                updatePlayerStatus(gameCode);
+                
+                // Lắng nghe phiên bỏ phiếu và game restart
+                listenToVotingSession(gameCode);
+                listenToGameRestart(gameCode, name);
+                document.getElementById('playerVotingContainer').classList.remove('hidden');
+                
             } catch (error) {
                 console.error('Lỗi khi kiểm tra trạng thái:', error);
                 showJoinStatus('Đã xảy ra lỗi. Vui lòng tham gia lại.', 'error');
-                
-                // Quay về danh sách phòng
-                backToRoomList();
+                await handlePlayerNotInRoom(gameCode);
             }
         }
-
+        
+        // Xử lý khi người chơi không còn trong phòng
+        async function handlePlayerNotInRoom(gameCode) {
+            // Xóa thông tin thiết bị đã tham gia phòng này
+            await db.ref(`device_rooms/${deviceId}/${gameCode}`).remove();
+            
+            // Xóa thông tin cũ
+            localStorage.removeItem('currentGame');
+            localStorage.removeItem('playerName');
+            localStorage.removeItem('playerRole');
+            localStorage.removeItem('playerStatus');
+            
+            // Hiển thị thông báo
+            showJoinStatus('Phiên của bạn đã hết hạn. Vui lòng tham gia lại.', 'error');
+            
+            // Quay về danh sách phòng
+            backToRoomList();
+        }
+        
+        // Cập nhật tóm tắt vai trò khi thay đổi danh sách vai trò
+        function updateRoleSummary() {
+            const rolesInput = document.getElementById('rolesInput').value.trim();
+            const roleSummary = document.getElementById('roleSummary');
+            const roleCountList = document.getElementById('roleCountList');
+            
+            // Nếu không có vai trò, ẩn phần tóm tắt
+            if (!rolesInput) {
+                roleSummary.classList.add('hidden');
+                return;
+            }
+            
+            // Phân tích danh sách vai trò
+            const roles = rolesInput.split(',').map(role => role.trim()).filter(role => role);
+            const roleCounts = {};
+            
+            // Đếm số lượng mỗi vai trò
+            roles.forEach(role => {
+                roleCounts[role] = (roleCounts[role] || 0) + 1;
+            });
+            
+            // Hiển thị tổng số vai trò
+            document.getElementById('totalRoles').textContent = roles.length;
+            
+            // Hiển thị chi tiết từng vai trò
+            roleCountList.innerHTML = '';
+            Object.entries(roleCounts).forEach(([role, count]) => {
+                const item = document.createElement('li');
+                item.className = 'role-count-item';
+                item.innerHTML = `<span>${role}</span><span>${count} người</span>`;
+                roleCountList.appendChild(item);
+            });
+            
+            // Hiển thị phần tóm tắt
+            roleSummary.classList.remove('hidden');
+        }
+        
         // Hàm tạo trò chơi (quản trò)
         async function setupGame() {
             let playerCount = document.getElementById('playerCount').value;
@@ -1057,7 +1244,9 @@
                 return;
             }
             
-            let roles = rolesInput.split(',').map(role => role.trim());
+            // Không cần lọc các vai trò trùng tên nữa
+            let roles = rolesInput.split(',').map(role => role.trim()).filter(role => role);
+            
             if (roles.length < playerCount) {
                 showSetupStatus('Số vai trò phải lớn hơn hoặc bằng số người chơi!', 'error');
                 return;
@@ -1120,58 +1309,75 @@
                 return;
             }
             
-            if (confirm('Bạn có chắc chắn muốn bắt đầu lại game và chia lại vai trò cho tất cả người chơi?')) {
-                try {
-                    // Lấy thông tin phòng hiện tại
-                    const gameRef = db.ref('games/' + currentGameCode);
-                    const snapshot = await gameRef.once('value');
-                    
-                    if (!snapshot.exists()) {
-                        alert('Phòng không còn tồn tại!');
-                        return;
+            showConfirmModal(
+                'Bắt đầu lại game',
+                'Bạn có chắc chắn muốn bắt đầu lại game và chia lại vai trò cho tất cả người chơi?',
+                async function() {
+                    try {
+                        // Lấy thông tin phòng hiện tại
+                        const gameRef = db.ref('games/' + currentGameCode);
+                        const snapshot = await gameRef.once('value');
+                        
+                        if (!snapshot.exists()) {
+                            alert('Phòng không còn tồn tại!');
+                            return;
+                        }
+                        
+                        const game = snapshot.val();
+                        const players = game.players || {};
+                        const roles = game.roles || [];
+                        
+                        // Kiểm tra nếu không có người chơi
+                        const playerCount = Object.keys(players).length;
+                        if (playerCount === 0) {
+                            alert('Không có người chơi nào trong phòng!');
+                            return;
+                        }
+                        
+                        // Kiểm tra nếu số vai trò không đủ
+                        if (roles.length < playerCount) {
+                            alert('Số vai trò ít hơn số người chơi! Vui lòng thêm vai trò.');
+                            return;
+                        }
+                        
+                        // Xáo trộn danh sách vai trò
+                        const shuffledRoles = [...roles].sort(() => Math.random() - 0.5);
+                        
+                        // Gán vai trò mới cho người chơi
+                        const playerNames = Object.keys(players);
+                        const newPlayers = {};
+                        
+                        let roleIndex = 0;
+                        playerNames.forEach((name) => {
+                            // Giữ lại trạng thái dead/alive hiện tại của người chơi
+                            if (typeof players[name] === 'object') {
+                                newPlayers[name] = {
+                                    role: shuffledRoles[roleIndex++],
+                                    status: players[name].status
+                                };
+                            } else {
+                                // Người chơi chưa có thông tin status - mặc định là alive
+                                newPlayers[name] = {
+                                    role: shuffledRoles[roleIndex++],
+                                    status: 'alive'
+                                };
+                            }
+                        });
+                        
+                        // Cập nhật vào database
+                        await gameRef.update({
+                            players: newPlayers,
+                            lastRestart: firebase.database.ServerValue.TIMESTAMP
+                        });
+                        
+                        alert('Đã chia lại vai trò thành công!');
+                        
+                    } catch (error) {
+                        console.error('Lỗi khi bắt đầu lại game:', error);
+                        alert('Đã xảy ra lỗi khi bắt đầu lại game. Vui lòng thử lại!');
                     }
-                    
-                    const game = snapshot.val();
-                    const players = game.players || {};
-                    const roles = game.roles || [];
-                    
-                    // Kiểm tra nếu không có người chơi
-                    const playerCount = Object.keys(players).length;
-                    if (playerCount === 0) {
-                        alert('Không có người chơi nào trong phòng!');
-                        return;
-                    }
-                    
-                    // Kiểm tra nếu số vai trò không đủ
-                    if (roles.length < playerCount) {
-                        alert('Số vai trò ít hơn số người chơi! Vui lòng thêm vai trò.');
-                        return;
-                    }
-                    
-                    // Xáo trộn danh sách vai trò
-                    const shuffledRoles = [...roles].sort(() => Math.random() - 0.5);
-                    
-                    // Gán vai trò mới cho người chơi
-                    const playerNames = Object.keys(players);
-                    const newPlayers = {};
-                    
-                    playerNames.forEach((name, index) => {
-                        newPlayers[name] = shuffledRoles[index];
-                    });
-                    
-                    // Cập nhật vào database
-                    await gameRef.update({
-                        players: newPlayers,
-                        lastRestart: firebase.database.ServerValue.TIMESTAMP
-                    });
-                    
-                    alert('Đã chia lại vai trò thành công!');
-                    
-                } catch (error) {
-                    console.error('Lỗi khi bắt đầu lại game:', error);
-                    alert('Đã xảy ra lỗi khi bắt đầu lại game. Vui lòng thử lại!');
                 }
-            }
+            );
         }
         
         // Hiển thị thông báo trạng thái thiết lập
@@ -1339,6 +1545,7 @@
             document.getElementById('joinStatus').classList.add('hidden');
             document.getElementById('roleResult').classList.add('hidden');
             document.getElementById('playerVotingContainer').classList.add('hidden');
+            document.getElementById('deadNotice').classList.add('hidden');
             
             // Hiển thị thông tin số lượng người chơi
             updatePlayerStatus(code);
@@ -1490,18 +1697,51 @@
                     return;
                 }
                 
-                let role = '';
+                let playerData;
+                let roleValue;
                 
                 if (isExistingPlayer) {
-                    // Người chơi cũ quay lại - sử dụng vai trò cũ
-                    role = game.players[playerName];
-                    showJoinStatus(`Chào mừng trở lại! Vai trò của bạn là: ${role}`, 'success');
+                    // Người chơi cũ quay lại - sử dụng vai trò và trạng thái cũ
+                    playerData = game.players[playerName];
+                    
+                    // Lấy thông tin vai trò và trạng thái
+                    if (typeof playerData === 'object') {
+                        roleValue = playerData.role;
+                        playerIsDead = playerData.status === 'dead';
+                    } else {
+                        // Trường hợp người chơi chưa được cập nhật sang định dạng mới
+                        roleValue = playerData;
+                        playerIsDead = false;
+                        
+                        // Cập nhật lên cấu trúc mới
+                        playerData = {
+                            role: roleValue,
+                            status: 'alive'
+                        };
+                        await gameRef.child('players').child(playerName).set(playerData);
+                    }
+                    
+                    // Hiển thị thông báo dựa trên trạng thái
+                    if (playerIsDead) {
+                        showJoinStatus(`Chào mừng trở lại! Bạn đã bị loại khỏi trò chơi.`, 'error');
+                    } else {
+                        showJoinStatus(`Chào mừng trở lại! Vai trò của bạn là: ${roleValue}`, 'success');
+                    }
                 } else {
                     // Người chơi mới - cần phân vai trò mới
                     // Lọc vai trò còn trống
-                    let availableRoles = game.roles.filter(role => 
-                        !Object.values(game.players).includes(role)
-                    );
+                    let availableRoles = game.roles.filter(role => {
+                        // Kiểm tra xem vai trò đã được gán cho ai chưa
+                        for (const playerName in game.players) {
+                            const player = game.players[playerName];
+                            if (typeof player === 'object') {
+                                if (player.role === role) return false;
+                            } else if (player === role) {
+                                return false;
+                            }
+                        }
+                        return true;
+                    });
                     
                     if (availableRoles.length === 0) {
                         showJoinStatus('Không còn vai trò nào!', 'error');
@@ -1509,10 +1749,19 @@
                     }
                     
                     // Chọn vai trò ngẫu nhiên
-                    role = availableRoles[Math.floor(Math.random() * availableRoles.length)];
+                    roleValue = availableRoles[Math.floor(Math.random() * availableRoles.length)];
+                    playerIsDead = false;
+                    
+                    // Tạo dữ liệu người chơi với định dạng mới
+                    playerData = {
+                        role: roleValue,
+                        status: 'alive'
+                    };
                     
                     // Cập nhật người chơi vào database
-                    await gameRef.child('players').update({ [playerName]: role });
+                    await gameRef.child('players').update({ [playerName]: playerData });
+                    
+                    showJoinStatus(`Bạn đã tham gia thành công với vai trò: ${roleValue}`, 'success');
                 }
                 
                 // Lưu thông tin thiết bị tham gia phòng này
@@ -1524,11 +1773,21 @@
                 // Lưu thông tin người chơi vào localStorage
                 localStorage.setItem('playerName', playerName);
                 localStorage.setItem('currentGame', selectedGameCode);
-                localStorage.setItem('playerRole', role);
+                localStorage.setItem('playerRole', roleValue);
+                localStorage.setItem('playerStatus', playerIsDead ? 'dead' : 'alive');
                 
                 // Hiển thị vai trò
-                document.getElementById('role').textContent = role;
+                document.getElementById('role').textContent = roleValue;
                 document.getElementById('roleResult').classList.remove('hidden');
+                
+                // Hiển thị trạng thái dead nếu cần
+                if (playerIsDead) {
+                    document.getElementById('roleResult').classList.add('dead');
+                    document.getElementById('deadNotice').classList.remove('hidden');
+                } else {
+                    document.getElementById('roleResult').classList.remove('dead');
+                    document.getElementById('deadNotice').classList.add('hidden');
+                }
                 
                 // Lắng nghe phiên bỏ phiếu
                 document.getElementById('playerVotingContainer').classList.remove('hidden');
@@ -1550,29 +1809,67 @@
                 gameRestartListener.off();
             }
             
-            // Lắng nghe thay đổi trong vai trò người chơi
+            // Lắng nghe thay đổi trong vai trò và trạng thái người chơi
             gameRestartListener = db.ref(`games/${gameCode}/players/${playerName}`);
             gameRestartListener.on('value', (snapshot) => {
                 if (!snapshot.exists()) return;
                 
-                const newRole = snapshot.val();
-                const oldRole = document.getElementById('role').textContent;
+                const playerData = snapshot.val();
                 
-                // Nếu vai trò đã thay đổi
-                if (newRole !== oldRole && oldRole.trim() !== '') {
+                // Xác định vai trò và trạng thái mới
+                let newRole, newStatus;
+                if (typeof playerData === 'object') {
+                    newRole = playerData.role || 'Không xác định';
+                    newStatus = playerData.status || 'alive';
+                } else {
+                    newRole = playerData;
+                    newStatus = 'alive';
+                }
+                
+                // Lấy giá trị hiện tại
+                const oldRole = document.getElementById('role').textContent;
+                const oldStatus = playerIsDead ? 'dead' : 'alive';
+                
+                // Nếu vai trò hoặc trạng thái đã thay đổi
+                if (newRole !== oldRole || newStatus !== oldStatus) {
                     // Cập nhật vai trò trên giao diện
                     document.getElementById('role').textContent = newRole;
+                    playerIsDead = newStatus === 'dead';
+                    
+                    // Cập nhật hiển thị trạng thái dead
+                    if (playerIsDead) {
+                        document.getElementById('roleResult').classList.add('dead');
+                        document.getElementById('deadNotice').classList.remove('hidden');
+                    } else {
+                        document.getElementById('roleResult').classList.remove('dead');
+                        document.getElementById('deadNotice').classList.add('hidden');
+                    }
+                    
+                    // Lưu vào localStorage
                     localStorage.setItem('playerRole', newRole);
+                    localStorage.setItem('playerStatus', newStatus);
                     
-                    // Hiển thị thông báo
-                    showJoinStatus(`Quản trò đã bắt đầu lại game. Vai trò mới của bạn là: ${newRole}`, 'success');
+                    // Hiển thị thông báo phù hợp
+                    if (newRole !== oldRole) {
+                        // Nếu vai trò thay đổi
+                        showJoinStatus(`Quản trò đã bắt đầu lại game. Vai trò mới của bạn là: ${newRole}`, 'success');
+                        
+                        // Thêm hiệu ứng để làm nổi bật thông báo
+                        const roleResult = document.getElementById('roleResult');
+                        roleResult.classList.add('role-flash');
+                        setTimeout(() => {
+                            roleResult.classList.remove('role-flash');
+                        }, 3000);
+                    }
                     
-                    // Thêm hiệu ứng để làm nổi bật thông báo
-                    const roleResult = document.getElementById('roleResult');
-                    roleResult.classList.add('role-flash');
-                    setTimeout(() => {
-                        roleResult.classList.remove('role-flash');
-                    }, 3000);
+                    // Nếu trạng thái thay đổi từ alive sang dead
+                    if (newStatus === 'dead' && oldStatus === 'alive') {
+                        showJoinStatus('Bạn đã bị loại khỏi trò chơi!', 'error');
+                    }
+                    // Nếu trạng thái thay đổi từ dead sang alive
+                    else if (newStatus === 'alive' && oldStatus === 'dead') {
+                        showJoinStatus('Bạn đã được hồi sinh!', 'success');
+                    }
                 }
             });
         }
@@ -1643,17 +1940,46 @@
                         <tr>
                             <th>Tên người chơi</th>
                             <th>Vai trò</th>
+                            <th>Trạng thái</th>
+                            <th>Thao tác</th>
                         </tr>
                     </thead>
                     <tbody>
             `;
             
             // Thêm dữ liệu người chơi
-            Object.entries(game.players).forEach(([player, role]) => {
+            Object.entries(game.players).forEach(([player, playerData]) => {
+                // Lấy thông tin vai trò và trạng thái
+                let role, status;
+                if (typeof playerData === 'object') {
+                    role = playerData.role;
+                    status = playerData.status || 'alive';
+                } else {
+                    role = playerData;
+                    status = 'alive';
+                }
+                
+                // Xác định các lớp CSS dựa trên trạng thái
+                const rowClass = status === 'dead' ? 'dead' : '';
+                const statusText = status === 'dead' ? 'Đã chết' : 'Còn sống';
+                const statusClass = status === 'dead' ? 'dead-status' : '';
+                
                 tableHTML += `
-                    <tr>
+                    <tr class="${rowClass}">
                         <td>${player}</td>
                         <td>${role}</td>
+                        <td>
+                            <span class="player-status ${statusClass}">${statusText}</span>
+                        </td>
+                        <td>
+                            <div class="player-actions">
+                                ${status === 'alive' ? 
+                                    `<button class="icon delete" title="Đánh dấu đã chết" onclick="togglePlayerStatus('${player}', 'dead')">☠️</button>` : 
+                                    `<button class="icon" title="Đánh dấu còn sống" onclick="togglePlayerStatus('${player}', 'alive')">❤️</button>`
+                                }
+                                <button class="icon warning" title="Đuổi khỏi phòng" onclick="kickPlayer('${player}')">🚫</button>
+                            </div>
+                        </td>
                     </tr>
                 `;
             });
@@ -1664,6 +1990,92 @@
             `;
             
             tableContainer.innerHTML = tableHTML;
+        }
+        
+        // Hàm đánh dấu người chơi đã chết/còn sống
+        async function togglePlayerStatus(playerName, newStatus) {
+            if (!currentGameCode || !playerName) {
+                alert('Không có thông tin người chơi!');
+                return;
+            }
+            
+            const action = newStatus === 'dead' ? 'đã chết' : 'còn sống';
+            
+            showConfirmModal(
+                'Cập nhật trạng thái người chơi',
+                `Bạn có chắc chắn muốn đánh dấu "${playerName}" là ${action}?`,
+                async function() {
+                    try {
+                        const playerRef = db.ref(`games/${currentGameCode}/players/${playerName}`);
+                        const snapshot = await playerRef.once('value');
+                        
+                        if (!snapshot.exists()) {
+                            alert('Không tìm thấy người chơi này!');
+                            return;
+                        }
+                        
+                        const playerData = snapshot.val();
+                        
+                        // Cập nhật trạng thái người chơi
+                        if (typeof playerData === 'object') {
+                            // Đã là định dạng mới, chỉ cập nhật trạng thái
+                            await playerRef.update({ status: newStatus });
+                        } else {
+                            // Định dạng cũ, cập nhật lên cấu trúc mới
+                            await playerRef.set({
+                                role: playerData,
+                                status: newStatus
+                            });
+                        }
+                        
+                        alert(`Đã cập nhật trạng thái của "${playerName}" thành ${action}.`);
+                        
+                    } catch (error) {
+                        console.error('Lỗi khi cập nhật trạng thái người chơi:', error);
+                        alert('Đã xảy ra lỗi khi cập nhật trạng thái người chơi!');
+                    }
+                }
+            );
+        }
+        
+        // Hàm đuổi người chơi khỏi phòng
+        async function kickPlayer(playerName) {
+            if (!currentGameCode || !playerName) {
+                alert('Không có thông tin người chơi!');
+                return;
+            }
+            
+            showConfirmModal(
+                'Đuổi người chơi',
+                `Bạn có chắc chắn muốn đuổi "${playerName}" khỏi phòng?`,
+                async function() {
+                    try {
+                        await db.ref(`games/${currentGameCode}/players/${playerName}`).remove();
+                        
+                        // Tìm thiết bị đã tham gia phòng này với tên người chơi này
+                        const deviceRoomsRef = db.ref('device_rooms');
+                        const snapshot = await deviceRoomsRef.once('value');
+                        const devices = snapshot.val() || {};
+                        
+                        // Xác định thiết bị cần xóa phiên
+                        for (const deviceId in devices) {
+                            if (devices[deviceId] && 
+                                devices[deviceId][currentGameCode] && 
+                                devices[deviceId][currentGameCode].playerName === playerName) {
+                                // Xóa thông tin thiết bị đã tham gia phòng này
+                                await deviceRoomsRef.child(`${deviceId}/${currentGameCode}`).remove();
+                                break;
+                            }
+                        }
+                        
+                        alert(`Đã đuổi "${playerName}" khỏi phòng thành công.`);
+                        
+                    } catch (error) {
+                        console.error('Lỗi khi đuổi người chơi:', error);
+                        alert('Đã xảy ra lỗi khi đuổi người chơi!');
+                    }
+                }
+            );
         }
 
         // Hàm tải dữ liệu bỏ phiếu cho quản trò
@@ -1834,13 +2246,17 @@
             const voteCounts = {};
             let totalVotes = 0;
             
-            // Khởi tạo số phiếu cho tất cả người chơi bằng 0
-            Object.keys(players).forEach(playerName => {
-                voteCounts[playerName] = 0;
+            // Khởi tạo số phiếu cho tất cả người chơi còn sống bằng 0
+            Object.entries(players).forEach(([playerName, playerData]) => {
+                // Chỉ đếm những người chơi còn sống
+                const status = typeof playerData === 'object' ? (playerData.status || 'alive') : 'alive';
+                if (status !== 'dead') {
+                    voteCounts[playerName] = 0;
+                }
             });
             
             // Đếm số phiếu
-            Object.values(votes).forEach(votedFor => {
+            Object.entries(votes).forEach(([voter, votedFor]) => {
                 if (voteCounts.hasOwnProperty(votedFor)) {
                     voteCounts[votedFor]++;
                     totalVotes++;
@@ -1910,6 +2326,32 @@
             }
             
             resultsList.appendChild(conclusion);
+            
+            // Thêm nút đánh dấu người chơi đã chết
+            if (winners.length > 0) {
+                const markDeadSection = document.createElement('div');
+                markDeadSection.style.marginTop = '20px';
+                markDeadSection.style.borderTop = '1px solid #ddd';
+                markDeadSection.style.paddingTop = '15px';
+                
+                const heading = document.createElement('h3');
+                heading.textContent = 'Đánh dấu người chơi đã chết';
+                
+                markDeadSection.appendChild(heading);
+                
+                winners.forEach(player => {
+                    const markButton = document.createElement('button');
+                    markButton.className = 'delete';
+                    markButton.style.marginTop = '10px';
+                    markButton.textContent = `Đánh dấu "${player}" đã chết`;
+                    markButton.onclick = function() {
+                        togglePlayerStatus(player, 'dead');
+                    };
+                    markDeadSection.appendChild(markButton);
+                });
+                
+                resultsList.appendChild(markDeadSection);
+            }
         }
         
         // Cập nhật đếm ngược thời gian bỏ phiếu
@@ -1976,8 +2418,8 @@
                 const votingOptions = document.getElementById('playerVotingOptions');
                 const voteConfirmation = document.getElementById('playerVoteConfirmation');
                 
-                // Nếu phiên bỏ phiếu đang diễn ra
-                if (votingData.active) {
+                // Nếu phiên bỏ phiếu đang diễn ra và người chơi còn sống
+                if (votingData.active && !playerIsDead) {
                     // Cập nhật trạng thái
                     votingStatus.textContent = 'Phiên bỏ phiếu đang diễn ra!';
                     votingStatus.className = 'voting-status active';
@@ -1988,6 +2430,14 @@
                     
                     // Tải danh sách người chơi để bỏ phiếu
                     loadVotingOptions(gameCode, votingData.votes || {});
+                    
+                } else if (votingData.active && playerIsDead) {
+                    // Người chơi đã chết nhưng phiên bỏ phiếu đang diễn ra
+                    votingStatus.textContent = 'Bạn không thể bỏ phiếu vì đã bị loại khỏi trò chơi';
+                    votingStatus.className = 'voting-status inactive';
+                    votingTimer.classList.add('hidden');
+                    votingOptions.innerHTML = '';
+                    voteConfirmation.classList.add('hidden');
                     
                 } else {
                     // Phiên bỏ phiếu đã kết thúc hoặc chưa bắt đầu
@@ -2008,14 +2458,14 @@
         
         // Tải danh sách người chơi cho phiên bỏ phiếu
         async function loadVotingOptions(gameCode, currentVotes) {
-            if (!gameCode || !playerName) return;
+            if (!gameCode || !playerName || playerIsDead) return;
             
             try {
                 // Lấy danh sách người chơi
                 const snapshot = await db.ref('games/' + gameCode + '/players').once('value');
                 if (!snapshot.exists()) return;
                 
-                const players = snapshot.val();
+                const allPlayers = snapshot.val();
                 const votingOptions = document.getElementById('playerVotingOptions');
                 votingOptions.innerHTML = '';
                 
@@ -2030,9 +2480,16 @@
                     document.getElementById('playerVoteConfirmation').classList.add('hidden');
                 }
                 
-                // Tạo danh sách lựa chọn (loại trừ người chơi hiện tại)
-                Object.entries(players).forEach(([name, role]) => {
-                    if (name !== playerName) {
+                // Tạo danh sách người chơi còn sống để bỏ phiếu (loại trừ người chơi hiện tại)
+                Object.entries(allPlayers).forEach(([name, playerData]) => {
+                    // Xác định trạng thái người chơi
+                    let status = 'alive';
+                    if (typeof playerData === 'object' && playerData.status) {
+                        status = playerData.status;
+                    }
+                    
+                    // Chỉ hiển thị người chơi còn sống và không phải bản thân
+                    if (name !== playerName && status !== 'dead') {
                         const option = document.createElement('div');
                         option.className = 'vote-option';
                         
@@ -2050,6 +2507,11 @@
                     }
                 });
                 
+                // Hiển thị thông báo nếu không còn ai để bỏ phiếu
+                if (votingOptions.children.length === 0) {
+                    votingOptions.innerHTML = '<p>Không có người chơi nào để bỏ phiếu.</p>';
+                }
+                
             } catch (error) {
                 console.error('Lỗi khi tải lựa chọn bỏ phiếu:', error);
             }
@@ -2057,7 +2519,7 @@
         
         // Hàm bỏ phiếu
         async function submitVote(gameCode, votedFor) {
-            if (!gameCode || !playerName || !votedFor) return;
+            if (!gameCode || !playerName || !votedFor || playerIsDead) return;
             
             try {
                 // Kiểm tra xem phiên bỏ phiếu có còn diễn ra không
@@ -2253,40 +2715,43 @@
                 return;
             }
             
-            if (confirm(`Bạn có chắc chắn muốn xóa phòng ${code}?`)) {
-                try {
-                    // Xóa phòng
-                    await db.ref('games/' + code).remove();
-                    
-                    // Tìm tất cả thiết bị đã tham gia phòng này và xóa thông tin
-                    const deviceRoomsRef = db.ref('device_rooms');
-                    const snapshot = await deviceRoomsRef.once('value');
-                    const devices = snapshot.val() || {};
-                    
-                    const updates = {};
-                    for (const deviceId in devices) {
-                        if (devices[deviceId] && devices[deviceId][code]) {
-                            updates[`${deviceId}/${code}`] = null;
+            showConfirmModal(
+                'Xóa phòng',
+                `Bạn có chắc chắn muốn xóa phòng ${code}?`,
+                async function() {
+                    try {
+                        // Xóa phòng
+                        await db.ref('games/' + code).remove();
+                        
+                        // Tìm tất cả thiết bị đã tham gia phòng này và xóa thông tin
+                        const deviceRoomsRef = db.ref('device_rooms');
+                        const snapshot = await deviceRoomsRef.once('value');
+                        const devices = snapshot.val() || {};
+                        
+                        const updates = {};
+                        for (const deviceId in devices) {
+                            if (devices[deviceId] && devices[deviceId][code]) {
+                                updates[`${deviceId}/${code}`] = null;
+                            }
                         }
+                        
+                        if (Object.keys(updates).length > 0) {
+                            await deviceRoomsRef.update(updates);
+                        }
+                        
+                        if (code === currentGameCode) {
+                            currentGameCode = '';
+                            document.getElementById('adminGameInfo').classList.add('hidden');
+                        }
+                        
+                        loadRooms(true);
+                        alert('Đã xóa phòng thành công!');
+                    } catch (error) {
+                        console.error('Lỗi khi xóa phòng:', error);
+                        alert('Lỗi khi xóa phòng. Vui lòng thử lại!');
                     }
-                    
-                    if (Object.keys(updates).length > 0) {
-                        await deviceRoomsRef.update(updates);
-                    }
-                    
-                    if (code === currentGameCode) {
-                        currentGameCode = '';
-                        document.getElementById('adminGameInfo').classList.add('hidden');
-                    }
-                    
-                    loadRooms(true);
-                    alert('Đã xóa phòng thành công!');
-                    
-                } catch (error) {
-                    console.error('Lỗi khi xóa phòng:', error);
-                    alert('Lỗi khi xóa phòng. Vui lòng thử lại!');
                 }
-            }
+            );
         }
         
         // Hàm xóa phòng hiện tại
