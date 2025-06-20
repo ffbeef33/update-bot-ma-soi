@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trò chơi Ma Sói</title>
+    
+    <!-- CSS -->
+    <link rel="stylesheet" href="css/main.css">
+    <link rel="stylesheet" href="css/player.css">
+    <link rel="stylesheet" href="css/admin.css">
+    <link rel="stylesheet" href="css/voting.css">
+    <link rel="stylesheet" href="css/night-notes.css">
+    <link rel="stylesheet" href="css/modal.css">
+    
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>Trò chơi Ma Sói</h1>
+        </div>
+        
+        <!-- Màn hình lựa chọn vai trò -->
+        <div id="roleSelectionScreen" class="section role-selection">
+            <h2>Chọn vai trò của bạn</h2>
+            <div class="role-options">
+                <div class="role-option" onclick="selectUserRole('player')">
+                    <div class="role-icon">👤</div>
+                    <h3>Người Chơi</h3>
+                    <p>Đăng nhập để xem vai trò của bạn</p>
+                </div>
+                <div class="role-option" onclick="selectUserRole('gameMaster')">
+                    <div class="role-icon">👑</div>
+                    <h3>Quản Trò</h3>
+                    <p>Quản lý trò chơi và theo dõi người chơi</p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Modal nhập mật khẩu quản trò -->
+        <div id="passwordModal" class="modal-overlay hidden">
+            <div class="modal">
+                <h3>Nhập mật khẩu quản trò</h3>
+                <div class="password-container">
+                    <input type="password" id="masterPassword" placeholder="Nhập mật khẩu">
+                    <button type="button" class="toggle-password" onclick="togglePasswordVisibility('masterPassword')">
+                        <span class="show-icon">👁️</span>
+                    </button>
+                </div>
+                <div id="passwordError" class="error-message hidden">Mật khẩu không chính xác!</div>
+                <div class="btn-group">
+                    <button onclick="verifyPassword()">Xác nhận</button>
+                    <button onclick="cancelPasswordModal()">Hủy</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modal xác nhận -->
+        <div id="confirmModal" class="modal-overlay hidden">
+            <div class="modal">
+                <h3 id="confirmTitle">Xác nhận hành động</h3>
+                <p id="confirmMessage">Bạn có chắc chắn muốn thực hiện hành động này?</p>
+                <div class="btn-group">
+                    <button id="confirmYesBtn" onclick="handleConfirmYes()">Đồng ý</button>
+                    <button onclick="closeConfirmModal()">Hủy</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Phần thiết lập trò chơi (quản trò) -->
+        <div id="setupContainer" class="hidden section">
+            <h2>Quản lý trò chơi</h2>
+            
+            <div class="sheets-info">
+                <h3>Cấu hình Google Sheets</h3>
+                <p>Dữ liệu người chơi được tải từ Google Sheets.</p>
+                <div id="sheetsStatus">
+                    <div class="loader"></div>
+                    <p>Đang tải dữ liệu từ Google Sheets...</p>
+                </div>
+            </div>
+            
+            <button id="refreshSheetsBtn" onclick="refreshSheetsData()">Làm mới dữ liệu từ Google Sheets</button>
+            
+            <div class="btn-group" style="margin-top: 15px;">
+                <button id="createGameBtn" onclick="setupGame()">Tạo phòng chơi mới</button>
+            </div>
+            
+            <div id="gameCode" class="hidden role-display">
+                Mã trò chơi: <span id="code" class="room-code"></span>
+            </div>
+            <div id="setupStatus" class="hidden status-bar"></div>
+        </div>
+
+        <!-- Phần danh sách phòng cho quản trò -->
+        <div id="adminRoomsContainer" class="hidden section">
+            <h2>Danh sách phòng</h2>
+            <button onclick="loadRooms(true)">Làm mới danh sách</button>
+            <div id="adminRoomsList" class="room-list"></div>
+        </div>
+
+        <!-- Phần người chơi đăng nhập -->
+        <div id="playerContainer" class="hidden section">
+            <h2>Trò chơi Ma Sói</h2>
+            
+            <div class="login-form">
+                <h3>Đăng nhập</h3>
+                <p>Nhập mật khẩu của bạn để xem vai trò</p>
+                <div class="password-container">
+                    <input type="password" id="playerPassword" placeholder="Mật khẩu">
+                    <button type="button" class="toggle-password" onclick="togglePasswordVisibility('playerPassword')">
+                        <span class="show-icon">👁️</span>
+                    </button>
+                </div>
+                <div id="loginStatus" class="hidden status-bar"></div>
+                <button onclick="playerLogin()">Đăng nhập</button>
+            </div>
+            
+            <div id="playerRoleView" class="hidden">
+                <div id="roleResult" class="role-display">
+                    <h3>Thông tin của bạn</h3>
+                    <p>Tên hiển thị: <span id="displayName"></span></p>
+                    <p>Vai trò: <span id="role"></span></p>
+                    <div id="deadNotice" class="hidden" style="margin-top: 10px; color: #b71c1c;">
+                        Bạn đã bị loại khỏi trò chơi
+                    </div>
+                </div>
+                
+                <!-- Thêm phần thông tin trò chơi cho người chơi -->
+                <div id="gameInfoForPlayer" class="role-display" style="background-color: #e3f2fd; border-left-color: var(--accent-color); margin-top: 20px;">
+                    <h3>Thông tin trò chơi</h3>
+                    <div class="game-stats">
+                        <p>Số người chơi: <span id="playerAliveCount">0</span>/<span id="playerTotalCount">0</span></p>
+                    </div>
+                    <div class="role-list-container">
+                        <h4>Vai trò trong game:</h4>
+                        <ul id="roleListForPlayer" class="role-list">
+                            <!-- Danh sách vai trò sẽ được thêm vào đây -->
+                        </ul>
+                    </div>
+                </div>
+                
+                <div id="waitingForGameStart" class="hidden role-display" style="background-color: #e8f4fd; border-left-color: var(--accent-color);">
+                    <h3>Đang chờ quản trò bắt đầu trò chơi</h3>
+                    <p>Vai trò của bạn sẽ hiển thị khi quản trò bắt đầu trò chơi.</p>
+                    <div class="loader" style="margin: 15px auto;"></div>
+                </div>
+                
+                <div id="gameEndedNotice" class="hidden role-display" style="background-color: #ffebee; border-left-color: var(--danger-color);">
+                    <h3>Trò chơi đã kết thúc</h3>
+                    <p>Trò chơi đã kết thúc, vui lòng chờ quản trò bắt đầu lại trò chơi.</p>
+                    <div class="loader" style="margin: 15px auto;"></div>
+                </div>
+                
+                <button onclick="playerLogout()" style="margin-top: 20px;">Đăng xuất</button>
+                
+                <!-- Phần bỏ phiếu cho người chơi -->
+                <div id="playerVotingContainer" class="voting-container">
+                    <h3>Bỏ phiếu loại người chơi</h3>
+                    <div id="playerVotingStatus" class="voting-status inactive">
+                        Hiện không có phiên bỏ phiếu nào đang diễn ra
+                    </div>
+                    <div id="playerVotingTimer" class="voting-timer hidden">
+                        Thời gian còn lại: <span id="playerCountdown" class="countdown">00:00</span>
+                    </div>
+                    <div id="playerVotingOptions" class="voting-options"></div>
+                    <div id="playerVoteConfirmation" class="hidden status-bar">
+                        Bạn đã bỏ phiếu cho: <span id="playerVoteChoice"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Phần quản trò xem vai trò -->
+        <div id="adminContainer" class="hidden section">
+            <h2>Quản lý vai trò</h2>
+            <div id="adminSearchArea">
+                <input type="text" id="adminGameCode" placeholder="Nhập mã phòng để xem">
+                <button onclick="viewRoles()">Xem vai trò</button>
+            </div>
+            <div id="adminGameInfo" class="hidden">
+                <div class="status-bar">
+                    Đang xem phòng: <span id="adminCurrentRoom" class="room-code"></span>
+                </div>
+                <div id="adminStatus" class="status-bar">
+                    Số người chơi: <span id="adminCurrentPlayers">0</span>/<span id="adminTotalPlayers">0</span>
+                </div>
+                <!-- Thêm thông báo người chơi đã đăng nhập -->
+                <div id="adminPlayersLogged" class="status-bar info">
+                    Số người chơi đã đăng nhập: <span id="loggedPlayersCount">0</span>
+                </div>
+                
+                <!-- Section quản lý người chơi có thể thu gọn -->
+                <div id="playerManagementSection" class="admin-section">
+                    <div class="section-header" onclick="toggleSection('playerManagementSection')">
+                        <h3>Quản lý người chơi</h3>
+                        <span class="toggle-icon"></span>
+                    </div>
+                    <div class="section-content">
+                        <div id="roleTableContainer"></div>
+                        
+                        <!-- Thay thế nút cập nhật từ Google Sheets bằng các nút mới -->
+                        <div class="btn-group" style="margin-top: 20px;">
+                            <button onclick="refreshRolesFromSheet()" class="secondary">Cập nhật</button>
+                            <button onclick="startGameForPlayers()" class="primary" id="startGameButton">Bắt đầu</button>
+                            <button onclick="endGame()" class="delete" id="endGameButton">Kết Thúc Trò Chơi</button>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Phần quản lý bỏ phiếu cho quản trò -->
+                <div id="votingSection" class="admin-section">
+                    <div class="section-header" onclick="toggleSection('votingSection')">
+                        <h3>Quản lý bỏ phiếu</h3>
+                        <span class="toggle-icon"></span>
+                    </div>
+                    <div class="section-content">
+                        <div id="votingContainer" class="voting-container">
+                            <div id="votingStatus" class="voting-status inactive">
+                                Chưa bắt đầu phiên bỏ phiếu nào
+                            </div>
+                            
+                            <div id="votingControls">
+                                <div class="input-group">
+                                    <label for="votingDuration">Thời gian bỏ phiếu (giây):</label>
+                                    <input type="number" id="votingDuration" value="60" min="10" max="300">
+                                </div>
+                                <button id="startVotingBtn" onclick="startVoting()" class="voting">Bắt đầu bỏ phiếu</button>
+                                <button id="endVotingBtn" onclick="endVoting()" class="delete hidden">Kết thúc bỏ phiếu ngay</button>
+                            </div>
+                            
+                            <div id="votingTimer" class="voting-timer hidden">
+                                Thời gian còn lại: <span id="countdown" class="countdown">00:00</span>
+                            </div>
+                            
+                            <div id="votingResults" class="voting-results hidden">
+                                <h3>Kết quả bỏ phiếu</h3>
+                                <div id="votingResultsList"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Phần ghi chú đêm -->
+                <div id="nightNotesSection" class="admin-section">
+                    <div class="section-header" onclick="toggleSection('nightNotesSection')">
+                        <h3>Ghi Chú Hành Động Các Đêm</h3>
+                        <span class="toggle-icon"></span>
+                    </div>
+                    <div class="section-content">
+                        <div id="gameNotesContainer" class="game-notes-container">
+                            <div id="nightTabs" class="night-tabs">
+                                <!-- Các tab đêm sẽ được tạo động -->
+                                <button class="add-night-btn" onclick="addNewNight()">+ Thêm đêm</button>
+                            </div>
+                            
+                            <div id="nightsContent">
+                                <!-- Nội dung ghi chú từng đêm sẽ được tạo động -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <button onclick="deleteCurrentRoom()" class="delete" style="margin-top: 20px;">Xóa phòng</button>
+            </div>
+        </div>
+        
+        <div class="footer">
+            <p>Ma Sói © 2025 | Phiên bản 2.0</p>
+            <p id="switchRole" class="hidden">
+                <a href="#" onclick="switchUserRole()">Chuyển đổi vai trò</a>
+            </p>
+        </div>
+    </div>
+
+    <!-- JavaScript modules -->
+    <script src="js/config.js"></script>
+    <script src="js/utils.js"></script>
+    <script src="js/auth.js"></script>
+    <script src="js/player.js"></script>
+    <script src="js/admin.js"></script>
+    <script src="js/game.js"></script>
+    <script src="js/voting.js"></script>
+    <script src="js/night-notes.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
